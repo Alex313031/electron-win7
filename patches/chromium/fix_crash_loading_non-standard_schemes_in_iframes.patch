@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shelley Vohr <shelley.vohr@gmail.com>
+Date: Mon, 29 Aug 2022 11:44:57 +0200
+Subject: fix: crash loading non-standard schemes in iframes
+
+This fixes a crash that occurs when loading non-standard schemes from
+iframes or webviews. This was happening because
+ChildProcessSecurityPolicyImpl::CanAccessDataForOrigin contains explicit
+exceptions to allow built-in non-standard schemes, but does not check
+for non-standard schemes registered by the embedder.
+
+This patch adjusts the origin calculation for non-standard schemes in
+ - browser process at `NavigationRequest::GetOriginForURLLoaderFactoryUncheckedWithDebugInfo`
+ - render process at `DocumentLoader::CalculateOrigin`
+
+When top level frame navigates to non-standard scheme url, the origin is calculated
+as `null` without any derivation. It is only in cases where there is a `initiator_origin`
+then the origin is derived from it, which is usually the case for renderer initiated
+navigations and iframes are no exceptions from this rule.
+
+Upstream bug https://bugs.chromium.org/p/chromium/issues/detail?id=1081397.
+
+Upstreamed at https://chromium-review.googlesource.com/c/chromium/src/+/3856266.
+
+diff --git a/content/browser/renderer_host/navigation_request.cc b/content/browser/renderer_host/navigation_request.cc
+index 0eed5d5e1bc86139298e8d4433c8a5974a618bb4..352a046a8f1874c4cd471c0ba25397291dcd3512 100644
+--- a/content/browser/renderer_host/navigation_request.cc
++++ b/content/browser/renderer_host/navigation_request.cc
+@@ -9873,6 +9873,12 @@ NavigationRequest::GetOriginForURLLoaderFactoryUncheckedWithDebugInfo() {
+     return std::make_pair(parent->GetLastCommittedOrigin(), "about_srcdoc");
+   }
+ 
++  if (!common_params().url.IsStandard()) {
++    return std::make_pair(url::Origin::Resolve(common_params().url,
++                                               url::Origin()),
++                          "url_non_standard");
++  }
++
+   // In cases not covered above, URLLoaderFactory should be associated with the
+   // origin of |common_params.url| and/or |common_params.initiator_origin|.
+   return std::make_pair(
+diff --git a/third_party/blink/renderer/core/loader/document_loader.cc b/third_party/blink/renderer/core/loader/document_loader.cc
+index a3db9af9b2330e106e02645aa43654c8db29b46f..cc9e0d69a63d5913ac50550cd05b1967b56e1658 100644
+--- a/third_party/blink/renderer/core/loader/document_loader.cc
++++ b/third_party/blink/renderer/core/loader/document_loader.cc
+@@ -2117,6 +2117,10 @@ Frame* DocumentLoader::CalculateOwnerFrame() {
+ scoped_refptr<SecurityOrigin> DocumentLoader::CalculateOrigin(
+     Document* owner_document) {
+   scoped_refptr<SecurityOrigin> origin;
++  bool is_standard = false;
++  std::string protocol = url_.Protocol().Ascii();
++  is_standard = url::IsStandard(
++      protocol.data(), url::Component(0, static_cast<int>(protocol.size())));
+   StringBuilder debug_info_builder;
+   if (origin_to_commit_) {
+     // Origin to commit is specified by the browser process, it must be taken
+@@ -2164,6 +2168,10 @@ scoped_refptr<SecurityOrigin> DocumentLoader::CalculateOrigin(
+     debug_info_builder.Append(", url=");
+     debug_info_builder.Append(owner_document->Url().BaseAsString());
+     debug_info_builder.Append(")");
++  } else if (!SecurityOrigin::ShouldUseInnerURL(url_) &&
++             !is_standard) {
++    debug_info_builder.Append("use_url_with_non_standard_scheme");
++    origin = SecurityOrigin::Create(url_);
+   } else {
+     debug_info_builder.Append("use_url_with_precursor");
+     // Otherwise, create an origin that propagates precursor information

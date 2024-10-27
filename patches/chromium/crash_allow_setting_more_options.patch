@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Apthorp <jeremya@chromium.org>
+Date: Thu, 30 Apr 2020 10:08:06 -0700
+Subject: crash: allow setting more options
+
+This allows the client of //components/crash to set upload url,
+rate-limiting, compression and global annotations.
+
+This should be upstreamed.
+
+diff --git a/components/crash/core/app/crash_reporter_client.cc b/components/crash/core/app/crash_reporter_client.cc
+index 3f3ed53d48fc4b19642cae847e69982782790e31..51d089f9fa0e1734f98f270a81a200beda71f2f4 100644
+--- a/components/crash/core/app/crash_reporter_client.cc
++++ b/components/crash/core/app/crash_reporter_client.cc
+@@ -141,6 +141,17 @@ bool CrashReporterClient::ReportingIsEnforcedByPolicy(bool* breakpad_enabled) {
+   return false;
+ }
+ 
++bool CrashReporterClient::GetShouldRateLimit() {
++  return true;
++}
++
++bool CrashReporterClient::GetShouldCompressUploads() {
++  return true;
++}
++
++void CrashReporterClient::GetProcessSimpleAnnotations(std::map<std::string, std::string>* annotations) {
++}
++
+ #if BUILDFLAG(IS_ANDROID)
+ unsigned int CrashReporterClient::GetCrashDumpPercentage() {
+   return 100;
+diff --git a/components/crash/core/app/crash_reporter_client.h b/components/crash/core/app/crash_reporter_client.h
+index a604df7a5ea6a1f5613acc032a65668364aadf89..93a8bf787bdaa0e4251a41453eb22062646f4bcb 100644
+--- a/components/crash/core/app/crash_reporter_client.h
++++ b/components/crash/core/app/crash_reporter_client.h
+@@ -7,6 +7,7 @@
+ 
+ #include <stdint.h>
+ 
++#include <map>
+ #include <string>
+ 
+ #include "build/build_config.h"
+@@ -153,6 +154,19 @@ class CrashReporterClient {
+   // that case, |breakpad_enabled| is set to the value enforced by policies.
+   virtual bool ReportingIsEnforcedByPolicy(bool* breakpad_enabled);
+ 
++  // Returns true if crash uploads should be rate limited. If false, no
++  // throttling will be applied for uploads.
++  virtual bool GetShouldRateLimit();
++
++  // Returns true if crash uploads should be compressed with gzip. If false,
++  // reports will be uploaded uncompressed.
++  virtual bool GetShouldCompressUploads();
++
++  // Allows the client to add or edit global annotations passed to the crashpad
++  // handler.
++  virtual void GetProcessSimpleAnnotations(
++      std::map<std::string, std::string>* annotations);
++
+ #if BUILDFLAG(IS_ANDROID)
+   // Used by WebView to sample crashes without generating the unwanted dumps. If
+   // the returned value is less than 100, crash dumping will be sampled to that
+diff --git a/components/crash/core/app/crashpad_linux.cc b/components/crash/core/app/crashpad_linux.cc
+index 99efa6b245b9944710b76a342ec9a37947078a48..e55df93f17560a566e1dd2a63c560054edd772a5 100644
+--- a/components/crash/core/app/crashpad_linux.cc
++++ b/components/crash/core/app/crashpad_linux.cc
+@@ -170,6 +170,7 @@ bool PlatformCrashpadInitialization(
+     // where crash_reporter provides it's own values for lsb-release.
+     annotations["lsb-release"] = base::GetLinuxDistro();
+ #endif
++    crash_reporter_client->GetProcessSimpleAnnotations(&annotations);
+ 
+     std::vector<std::string> arguments;
+     if (crash_reporter_client->ShouldMonitorCrashHandlerExpensively()) {
+@@ -191,6 +192,13 @@ bool PlatformCrashpadInitialization(
+     }
+ #endif
+ 
++    if (!crash_reporter_client->GetShouldRateLimit()) {
++      arguments.push_back("--no-rate-limit");
++    }
++    if (!crash_reporter_client->GetShouldCompressUploads()) {
++      arguments.push_back("--no-upload-gzip");
++    }
++
+     CHECK(client.StartHandler(handler_path, *database_path, metrics_path, url,
+                               annotations, arguments, false, false));
+   } else {
+diff --git a/components/crash/core/app/crashpad_mac.mm b/components/crash/core/app/crashpad_mac.mm
+index eb5bcfe0234c39526d6d162434476fe9e32d8184..8480d07e2607eb3c8c16b54a02077c0454d11fce 100644
+--- a/components/crash/core/app/crashpad_mac.mm
++++ b/components/crash/core/app/crashpad_mac.mm
+@@ -87,6 +87,8 @@
+     }  // @autoreleasepool
+     return process_annotations;
+   }();
++  CrashReporterClient* crash_reporter_client = GetCrashReporterClient();
++  crash_reporter_client->GetProcessSimpleAnnotations(&annotations);
+   return annotations;
+ }
+ 
+@@ -157,6 +159,13 @@ bool PlatformCrashpadInitialization(
+ 
+       std::vector<std::string> arguments;
+ 
++      if (!crash_reporter_client->GetShouldRateLimit()) {
++        arguments.push_back("--no-rate-limit");
++      }
++      if (!crash_reporter_client->GetShouldCompressUploads()) {
++        arguments.push_back("--no-upload-gzip");
++      }
++
+       if (crash_reporter_client->ShouldMonitorCrashHandlerExpensively()) {
+         arguments.push_back("--monitor-self");
+       }
+diff --git a/components/crash/core/app/crashpad_win.cc b/components/crash/core/app/crashpad_win.cc
+index 9ab5fb1c822752854fc88ba0ee3d24ddca4dd107..11ae602ccc58cb2728911b28d6637079d2dcb359 100644
+--- a/components/crash/core/app/crashpad_win.cc
++++ b/components/crash/core/app/crashpad_win.cc
+@@ -91,6 +91,7 @@ bool PlatformCrashpadInitialization(
+ 
+     std::map<std::string, std::string> process_annotations;
+     GetPlatformCrashpadAnnotations(&process_annotations);
++    crash_reporter_client->GetProcessSimpleAnnotations(&process_annotations);
+ 
+     std::string url = crash_reporter_client->GetUploadUrl();
+ 
+@@ -129,6 +130,13 @@ bool PlatformCrashpadInitialization(
+ 
+     std::vector<std::string> arguments(start_arguments);
+ 
++    if (!crash_reporter_client->GetShouldRateLimit()) {
++      arguments.push_back("--no-rate-limit");
++    }
++    if (!crash_reporter_client->GetShouldCompressUploads()) {
++      arguments.push_back("--no-upload-gzip");
++    }
++
+     if (crash_reporter_client->ShouldMonitorCrashHandlerExpensively()) {
+       arguments.push_back("--monitor-self");
+       for (const std::string& start_argument : start_arguments) {

@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Samuel Attard <sattard@slack-corp.com>
+Date: Wed, 23 Oct 2019 11:43:58 -0700
+Subject: remove usage of incognito APIs in the spellchecker
+
+chrome::GetBrowserContextRedirectedInIncognito is not available in
+Electron nor do we want it to be.  We could potentially upstream a
+change to move more of //chrome spellchecker logic into //components so
+that we can further separate our dependency from //chrome.
+
+diff --git a/chrome/browser/profiles/profile_keyed_service_factory.cc b/chrome/browser/profiles/profile_keyed_service_factory.cc
+index 30a7e6a641e7b17a47fb5c66fb44d3d5899b9e78..85764a533585df0abe398758e4fd510c711de375 100644
+--- a/chrome/browser/profiles/profile_keyed_service_factory.cc
++++ b/chrome/browser/profiles/profile_keyed_service_factory.cc
+@@ -22,6 +22,9 @@ ProfileKeyedServiceFactory::~ProfileKeyedServiceFactory() = default;
+ 
+ content::BrowserContext* ProfileKeyedServiceFactory::GetBrowserContextToUse(
+     content::BrowserContext* context) const {
++  return context;
++#if 0
+   Profile* profile = Profile::FromBrowserContext(context);
+   return profile_selections_.ApplyProfileSelection(profile);
++#endif
+ }
+diff --git a/chrome/browser/profiles/profile_selections.cc b/chrome/browser/profiles/profile_selections.cc
+index ab3979e69f272bbc9596300823d96641fdf960bd..0df82b71f05c34bd7896996feabcdd91ef3ea654 100644
+--- a/chrome/browser/profiles/profile_selections.cc
++++ b/chrome/browser/profiles/profile_selections.cc
+@@ -121,6 +121,7 @@ Profile* ProfileSelections::ApplyProfileSelection(Profile* profile) const {
+ 
+ ProfileSelection ProfileSelections::GetProfileSelection(
+     const Profile* profile) const {
++#if 0
+ #if BUILDFLAG(IS_CHROMEOS_ASH)
+   // This check has to be performed before the check on
+   // `profile->IsRegularProfile()` because profiles that are internal ASH
+@@ -156,6 +157,7 @@ ProfileSelection ProfileSelections::GetProfileSelection(
+   }
+ 
+   NOTREACHED();
++#endif
+   return ProfileSelection::kNone;
+ }
+ 

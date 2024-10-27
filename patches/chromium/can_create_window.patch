@@ -1,0 +1,224 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cheng Zhao <zcbenz@gmail.com>
+Date: Thu, 20 Sep 2018 17:45:32 -0700
+Subject: can_create_window.patch
+
+This adds a hook to the window creation flow so that Electron can intercede and
+potentially prevent a window from being created.
+
+TODO(loc): this patch is currently broken.
+
+diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
+index c1a712883d4b5af6d77d2174589f2f95625cb05e..390866ca02889c9c7dc58561f32d2e195fc700a8 100644
+--- a/content/browser/renderer_host/render_frame_host_impl.cc
++++ b/content/browser/renderer_host/render_frame_host_impl.cc
+@@ -8237,6 +8237,7 @@ void RenderFrameHostImpl::CreateNewWindow(
+           last_committed_origin_, params->window_container_type,
+           params->target_url, params->referrer.To<Referrer>(),
+           params->frame_name, params->disposition, *params->features,
++          params->raw_features, params->body,
+           effective_transient_activation_state, params->opener_suppressed,
+           &no_javascript_access);
+ 
+diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
+index dba3fa7b487fe9fb7ff975df647ac30f2ffbd202..910ea0d1e11e1dc3deb660b322b67bf223735822 100644
+--- a/content/browser/web_contents/web_contents_impl.cc
++++ b/content/browser/web_contents/web_contents_impl.cc
+@@ -4492,6 +4492,12 @@ FrameTree* WebContentsImpl::CreateNewWindow(
+ 
+   auto* new_contents_impl = new_contents.get();
+ 
++  if (delegate_) {
++    delegate_->WebContentsCreatedWithFullParams(this, render_process_id,
++                                                opener->GetRoutingID(),
++                                                params, new_contents_impl);
++  }
++
+   // If the new frame has a name, make sure any SiteInstances that can find
+   // this named frame have proxies for it.  Must be called after
+   // SetSessionStorageNamespace, since this calls CreateRenderView, which uses
+@@ -4533,12 +4539,6 @@ FrameTree* WebContentsImpl::CreateNewWindow(
+     AddWebContentsDestructionObserver(new_contents_impl);
+   }
+ 
+-  if (delegate_) {
+-    delegate_->WebContentsCreated(this, render_process_id,
+-                                  opener->GetRoutingID(), params.frame_name,
+-                                  params.target_url, new_contents_impl);
+-  }
+-
+   observers_.NotifyObservers(&WebContentsObserver::DidOpenRequestedURL,
+                              new_contents_impl, opener, params.target_url,
+                              params.referrer.To<Referrer>(), params.disposition,
+diff --git a/content/common/frame.mojom b/content/common/frame.mojom
+index 40c14e1757dee4fda9aa79f3a52532f8ab737a97..2c833d683b737bd6b24d2ec10d97b46d2c9fcdb0 100644
+--- a/content/common/frame.mojom
++++ b/content/common/frame.mojom
+@@ -598,6 +598,10 @@ struct CreateNewWindowParams {
+   // The navigation initiator's user activation and ad status.
+   blink.mojom.NavigationInitiatorActivationAndAdStatus
+       initiator_activation_and_ad_status;
++
++  // Extra fields added by Electron.
++  string raw_features;
++  network.mojom.URLRequestBody? body;
+ };
+ 
+ // Operation result when the renderer asks the browser to create a new window.
+diff --git a/content/public/browser/content_browser_client.cc b/content/public/browser/content_browser_client.cc
+index 86e81bb8b922c96690c216e710e90d0eeccb916e..c3da6e9fe37b4278bbc2a2b3fab9a3ef0f0ffb42 100644
+--- a/content/public/browser/content_browser_client.cc
++++ b/content/public/browser/content_browser_client.cc
+@@ -717,6 +717,8 @@ bool ContentBrowserClient::CanCreateWindow(
+     const std::string& frame_name,
+     WindowOpenDisposition disposition,
+     const blink::mojom::WindowFeatures& features,
++    const std::string& raw_features,
++    const scoped_refptr<network::ResourceRequestBody>& body,
+     bool user_gesture,
+     bool opener_suppressed,
+     bool* no_javascript_access) {
+diff --git a/content/public/browser/content_browser_client.h b/content/public/browser/content_browser_client.h
+index 5298101d6dbf0a1e4c9a1d973ff9e58ba299ad9b..4b0dea762a10abb23ff02a2409109182edc0e5c0 100644
+--- a/content/public/browser/content_browser_client.h
++++ b/content/public/browser/content_browser_client.h
+@@ -177,6 +177,7 @@ class NetworkService;
+ class TrustedURLLoaderHeaderClient;
+ }  // namespace mojom
+ struct ResourceRequest;
++class ResourceRequestBody;
+ }  // namespace network
+ 
+ namespace sandbox {
+@@ -1164,6 +1165,8 @@ class CONTENT_EXPORT ContentBrowserClient {
+       const std::string& frame_name,
+       WindowOpenDisposition disposition,
+       const blink::mojom::WindowFeatures& features,
++      const std::string& raw_features,
++      const scoped_refptr<network::ResourceRequestBody>& body,
+       bool user_gesture,
+       bool opener_suppressed,
+       bool* no_javascript_access);
+diff --git a/content/public/browser/web_contents_delegate.cc b/content/public/browser/web_contents_delegate.cc
+index 65f48548664dcf493014b94c522dfb11abb2856b..92b70d9f01a8491a282868b856b66f39cb172a34 100644
+--- a/content/public/browser/web_contents_delegate.cc
++++ b/content/public/browser/web_contents_delegate.cc
+@@ -29,6 +29,17 @@ namespace content {
+ 
+ WebContentsDelegate::WebContentsDelegate() = default;
+ 
++void WebContentsDelegate::WebContentsCreatedWithFullParams(
++    WebContents* source_contents,
++    int opener_render_process_id,
++    int opener_render_frame_id,
++    const mojom::CreateNewWindowParams& params,
++    WebContents* new_contents) {
++  WebContentsCreated(source_contents, opener_render_process_id,
++                     opener_render_frame_id, params.frame_name,
++                     params.target_url, new_contents);
++}
++
+ WebContents* WebContentsDelegate::OpenURLFromTab(WebContents* source,
+                                                  const OpenURLParams& params) {
+   return nullptr;
+diff --git a/content/public/browser/web_contents_delegate.h b/content/public/browser/web_contents_delegate.h
+index 253f028c108b2532415b0938f47a3c22af83acb5..b812fe201a5d97e80314da3fa26010a1acc3cace 100644
+--- a/content/public/browser/web_contents_delegate.h
++++ b/content/public/browser/web_contents_delegate.h
+@@ -16,6 +16,7 @@
+ #include "base/memory/scoped_refptr.h"
+ #include "build/build_config.h"
+ #include "content/common/content_export.h"
++#include "content/common/frame.mojom.h"
+ #include "content/public/browser/eye_dropper.h"
+ #include "content/public/browser/fullscreen_types.h"
+ #include "content/public/browser/invalidate_type.h"
+@@ -344,6 +345,13 @@ class CONTENT_EXPORT WebContentsDelegate {
+       const StoragePartitionConfig& partition_config,
+       SessionStorageNamespace* session_storage_namespace);
+ 
++  virtual void WebContentsCreatedWithFullParams(
++      WebContents* source_contents,
++      int opener_render_process_id,
++      int opener_render_frame_id,
++      const mojom::CreateNewWindowParams& params,
++      WebContents* new_contents);
++
+   // Notifies the delegate about the creation of a new WebContents. This
+   // typically happens when popups are created.
+   virtual void WebContentsCreated(WebContents* source_contents,
+diff --git a/content/renderer/render_frame_impl.cc b/content/renderer/render_frame_impl.cc
+index be58abae55bd455bb84d3873f68f34efbab4cbde..cdcb4a0a0ec3a44a79dac18086721d8fbb598e2e 100644
+--- a/content/renderer/render_frame_impl.cc
++++ b/content/renderer/render_frame_impl.cc
+@@ -6512,6 +6512,10 @@ WebView* RenderFrameImpl::CreateNewWindow(
+           request.HasUserGesture(), GetWebFrame()->IsAdFrame(),
+           GetWebFrame()->IsAdScriptInStack());
+ 
++  params->raw_features = features.raw_features.Utf8(
++      WTF::UTF8ConversionMode::kStrictUTF8ConversionReplacingUnpairedSurrogatesWithFFFD);
++  params->body = GetRequestBodyForWebURLRequest(request);
++
+   // We preserve this information before sending the message since |params| is
+   // moved on send.
+   bool is_background_tab =
+diff --git a/content/web_test/browser/web_test_content_browser_client.cc b/content/web_test/browser/web_test_content_browser_client.cc
+index 51de81df6cb5126a750dab43322f8fc1fc484d80..9cb924a1969eef8d3940cc261e286e10c6d84d5c 100644
+--- a/content/web_test/browser/web_test_content_browser_client.cc
++++ b/content/web_test/browser/web_test_content_browser_client.cc
+@@ -512,6 +512,8 @@ bool WebTestContentBrowserClient::CanCreateWindow(
+     const std::string& frame_name,
+     WindowOpenDisposition disposition,
+     const blink::mojom::WindowFeatures& features,
++    const std::string& raw_features,
++    const scoped_refptr<network::ResourceRequestBody>& body,
+     bool user_gesture,
+     bool opener_suppressed,
+     bool* no_javascript_access) {
+diff --git a/content/web_test/browser/web_test_content_browser_client.h b/content/web_test/browser/web_test_content_browser_client.h
+index 4869a7502ed31ad6101bd89f899325ffef427c0e..954037dc4fdc21b922debb7a123f1e93e788a908 100644
+--- a/content/web_test/browser/web_test_content_browser_client.h
++++ b/content/web_test/browser/web_test_content_browser_client.h
+@@ -86,6 +86,8 @@ class WebTestContentBrowserClient : public ShellContentBrowserClient {
+                        const std::string& frame_name,
+                        WindowOpenDisposition disposition,
+                        const blink::mojom::WindowFeatures& features,
++                       const std::string& raw_features,
++                       const scoped_refptr<network::ResourceRequestBody>& body,
+                        bool user_gesture,
+                        bool opener_suppressed,
+                        bool* no_javascript_access) override;
+diff --git a/third_party/blink/public/web/web_window_features.h b/third_party/blink/public/web/web_window_features.h
+index bef5a989bac50c177f15f52fe87ac3790d553e85..65dcd2e3b51929400c8bfb6a98a4fb59bb6a3d6b 100644
+--- a/third_party/blink/public/web/web_window_features.h
++++ b/third_party/blink/public/web/web_window_features.h
+@@ -34,6 +34,7 @@
+ #include "third_party/abseil-cpp/absl/types/optional.h"
+ #include "third_party/blink/public/platform/web_string.h"
+ #include "third_party/blink/public/platform/web_vector.h"
++#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+ 
+ namespace blink {
+ 
+@@ -73,6 +74,8 @@ struct WebWindowFeatures {
+   // TODO(apaseltiner): Investigate moving this field to a non-public struct
+   // since it is only needed within //third_party/blink.
+   absl::optional<WebVector<WebString>> attribution_srcs;
++
++  String raw_features;
+ };
+ 
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/core/frame/local_dom_window.cc b/third_party/blink/renderer/core/frame/local_dom_window.cc
+index 7405d410af1859db405f3cc7a2169f3aab597631..bb27d4350590bc7712a271567e1457e6551c7f7d 100644
+--- a/third_party/blink/renderer/core/frame/local_dom_window.cc
++++ b/third_party/blink/renderer/core/frame/local_dom_window.cc
+@@ -2175,6 +2175,8 @@ DOMWindow* LocalDOMWindow::open(v8::Isolate* isolate,
+   WebWindowFeatures window_features =
+       GetWindowFeaturesFromString(features, entered_window);
+ 
++  window_features.raw_features = features;
++
+   // In fenced frames, we should always use `noopener`.
+   if (GetFrame()->IsInFencedFrameTree()) {
+     window_features.noopener = true;

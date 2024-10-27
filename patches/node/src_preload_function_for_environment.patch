@@ -1,0 +1,283 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cheng Zhao <zcbenz@gmail.com>
+Date: Mon, 4 Mar 2024 11:41:18 +0900
+Subject: src: preload function for Environment
+
+Backport https://github.com/nodejs/node/pull/51539
+
+diff --git a/lib/internal/process/pre_execution.js b/lib/internal/process/pre_execution.js
+index 2d892267a08772f4c37ee381c55f46b3a99f2232..e3daca3ba8cddac8db5fc73d78d869fedb4204af 100644
+--- a/lib/internal/process/pre_execution.js
++++ b/lib/internal/process/pre_execution.js
+@@ -126,6 +126,9 @@ function setupUserModules() {
+   initializeESMLoader();
+   const CJSLoader = require('internal/modules/cjs/loader');
+   assert(!CJSLoader.hasLoadedAnyUserCJSModule);
++  if (getEmbedderOptions().hasEmbedderPreload) {
++    runEmbedderPreload();
++  }
+   loadPreloadModules();
+   // Need to be done after --require setup.
+   initializeFrozenIntrinsics();
+@@ -588,6 +591,10 @@ function initializeFrozenIntrinsics() {
+   }
+ }
+ 
++function runEmbedderPreload() {
++  internalBinding('mksnapshot').runEmbedderPreload(process, require);
++}
++
+ function loadPreloadModules() {
+   // For user code, we preload modules if `-r` is passed
+   const preloadModules = getOptionValue('--require');
+diff --git a/src/api/environment.cc b/src/api/environment.cc
+index c4caef25af670658965fc740ce03c2d2c4ed3e66..465ff36b79c36d29777c7b1abe3a35d3be5de93e 100644
+--- a/src/api/environment.cc
++++ b/src/api/environment.cc
+@@ -484,18 +484,22 @@ NODE_EXTERN std::unique_ptr<InspectorParentHandle> GetInspectorParentHandle(
+ #endif
+ }
+ 
+-MaybeLocal<Value> LoadEnvironment(
+-    Environment* env,
+-    StartExecutionCallback cb) {
++MaybeLocal<Value> LoadEnvironment(Environment* env,
++                                  StartExecutionCallback cb,
++                                  EmbedderPreloadCallback preload) {
+   env->InitializeLibuv();
+   env->InitializeDiagnostics();
++  if (preload) {
++    env->set_embedder_preload(std::move(preload));
++  }
+ 
+   return StartExecution(env, cb);
+ }
+ 
+ MaybeLocal<Value> LoadEnvironment(
+     Environment* env,
+-    const char* main_script_source_utf8) {
++    const char* main_script_source_utf8,
++    EmbedderPreloadCallback preload) {
+   CHECK_NOT_NULL(main_script_source_utf8);
+   return LoadEnvironment(
+       env, [&](const StartExecutionCallbackInfo& info) -> MaybeLocal<Value> {
+@@ -508,7 +512,8 @@ MaybeLocal<Value> LoadEnvironment(
+         std::vector<Local<Value>> args = {realm->process_object(),
+                                           realm->builtin_module_require()};
+         return realm->ExecuteBootstrapper(name.c_str(), &args);
+-      });
++      },
++      std::move(preload));
+ }
+ 
+ Environment* GetCurrentEnvironment(Local<Context> context) {
+diff --git a/src/env-inl.h b/src/env-inl.h
+index c68ea0fb1d45fadfa64f092a96ee04ecd9fe4c2d..2db4d431b3ce573e77e282b74c06a57a38d09417 100644
+--- a/src/env-inl.h
++++ b/src/env-inl.h
+@@ -378,6 +378,14 @@ inline std::vector<double>* Environment::destroy_async_id_list() {
+   return &destroy_async_id_list_;
+ }
+ 
++inline const EmbedderPreloadCallback& Environment::embedder_preload() const {
++  return embedder_preload_;
++}
++
++inline void Environment::set_embedder_preload(EmbedderPreloadCallback fn) {
++  embedder_preload_ = std::move(fn);
++}
++
+ inline double Environment::new_async_id() {
+   async_hooks()->async_id_fields()[AsyncHooks::kAsyncIdCounter] += 1;
+   return async_hooks()->async_id_fields()[AsyncHooks::kAsyncIdCounter];
+diff --git a/src/env.h b/src/env.h
+index 9b5fcdaed5fdda44cd8103a0821a7b5358523f4e..6a5a7eeec866f6e501feeb03fe7da5ada011afa0 100644
+--- a/src/env.h
++++ b/src/env.h
+@@ -925,6 +925,9 @@ class Environment : public MemoryRetainer {
+ 
+ #endif  // HAVE_INSPECTOR
+ 
++  inline const EmbedderPreloadCallback& embedder_preload() const;
++  inline void set_embedder_preload(EmbedderPreloadCallback fn);
++
+   inline void set_process_exit_handler(
+       std::function<void(Environment*, int)>&& handler);
+ 
+@@ -1094,6 +1097,7 @@ class Environment : public MemoryRetainer {
+       DefaultProcessExitHandler };
+ 
+   std::unique_ptr<Realm> principal_realm_ = nullptr;
++  EmbedderPreloadCallback embedder_preload_;
+ 
+   // Used by allocate_managed_buffer() and release_managed_buffer() to keep
+   // track of the BackingStore for a given pointer.
+diff --git a/src/node.h b/src/node.h
+index 26368061a909e6abc62a4cf261a5dbbd79404f1a..0dec1e311d7c00c2b830a0b2a6bde4336aebe68b 100644
+--- a/src/node.h
++++ b/src/node.h
+@@ -630,13 +630,33 @@ struct StartExecutionCallbackInfo {
+ 
+ using StartExecutionCallback =
+     std::function<v8::MaybeLocal<v8::Value>(const StartExecutionCallbackInfo&)>;
++using EmbedderPreloadCallback =
++    std::function<void(Environment* env,
++                       v8::Local<v8::Value> process,
++                       v8::Local<v8::Value> require)>;
+ 
++// Run initialization for the environment.
++//
++// The |preload| function, usually used by embedders to inject scripts,
++// will be run by Node.js before Node.js executes the entry point.
++// The function is guaranteed to run before the user land module loader running
++// any user code, so it is safe to assume that at this point, no user code has
++// been run yet.
++// The function will be executed with preload(process, require), and the passed
++// require function has access to internal Node.js modules. There is no
++// stability guarantee about the internals exposed to the internal require
++// function. Expect breakages when updating Node.js versions if the embedder
++// imports internal modules with the internal require function.
++// Worker threads created in the environment will also respect The |preload|
++// function, so make sure the function is thread-safe.
+ NODE_EXTERN v8::MaybeLocal<v8::Value> LoadEnvironment(
+     Environment* env,
+-    StartExecutionCallback cb);
++    StartExecutionCallback cb,
++    EmbedderPreloadCallback preload = nullptr);
+ NODE_EXTERN v8::MaybeLocal<v8::Value> LoadEnvironment(
+     Environment* env,
+-    const char* main_script_source_utf8);
++    const char* main_script_source_utf8,
++    EmbedderPreloadCallback preload = nullptr);
+ NODE_EXTERN void FreeEnvironment(Environment* env);
+ 
+ // Set a callback that is called when process.exit() is called from JS,
+diff --git a/src/node_options.cc b/src/node_options.cc
+index 365748f046f9d0f232d4f0ebc7b0c7f56bbd74e2..a076de0c5e577114a6166844ab3b4f02db8065ad 100644
+--- a/src/node_options.cc
++++ b/src/node_options.cc
+@@ -1230,6 +1230,12 @@ void GetEmbedderOptions(const FunctionCallbackInfo<Value>& args) {
+            Boolean::New(isolate, env->no_global_search_paths()))
+       .IsNothing()) return;
+ 
++  if (ret->Set(context,
++               FIXED_ONE_BYTE_STRING(env->isolate(), "hasEmbedderPreload"),
++               Boolean::New(isolate, env->embedder_preload() != nullptr))
++          .IsNothing())
++    return;
++
+   args.GetReturnValue().Set(ret);
+ }
+ 
+diff --git a/src/node_snapshotable.cc b/src/node_snapshotable.cc
+index f70e6ddf4303f303d7ace859b257738fd6707853..3f89973349f03128ab77f7cf3902506ec79d1272 100644
+--- a/src/node_snapshotable.cc
++++ b/src/node_snapshotable.cc
+@@ -1462,6 +1462,17 @@ void SerializeSnapshotableObjects(Realm* realm,
+ 
+ namespace mksnapshot {
+ 
++void RunEmbedderPreload(const FunctionCallbackInfo<Value>& args) {
++  Environment* env = Environment::GetCurrent(args);
++  CHECK(env->embedder_preload());
++  CHECK_EQ(args.Length(), 2);
++  Local<Value> process_obj = args[0];
++  Local<Value> require_fn = args[1];
++  CHECK(process_obj->IsObject());
++  CHECK(require_fn->IsFunction());
++  env->embedder_preload()(env, process_obj, require_fn);
++}
++
+ void CompileSerializeMain(const FunctionCallbackInfo<Value>& args) {
+   CHECK(args[0]->IsString());
+   Local<String> filename = args[0].As<String>();
+@@ -1515,6 +1526,7 @@ void Initialize(Local<Object> target,
+                 Local<Value> unused,
+                 Local<Context> context,
+                 void* priv) {
++  SetMethod(context, target, "runEmbedderPreload", RunEmbedderPreload);
+   SetMethod(context, target, "compileSerializeMain", CompileSerializeMain);
+   SetMethod(context, target, "setSerializeCallback", SetSerializeCallback);
+   SetMethod(context, target, "setDeserializeCallback", SetDeserializeCallback);
+@@ -1525,6 +1537,7 @@ void Initialize(Local<Object> target,
+ }
+ 
+ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
++  registry->Register(RunEmbedderPreload);
+   registry->Register(CompileSerializeMain);
+   registry->Register(SetSerializeCallback);
+   registry->Register(SetDeserializeCallback);
+diff --git a/src/node_worker.cc b/src/node_worker.cc
+index 6a49144ec4f2059fe75983609b0768e4c2b1817d..13b0445370c70cf3765a4af44336c16ac2e1035d 100644
+--- a/src/node_worker.cc
++++ b/src/node_worker.cc
+@@ -60,6 +60,7 @@ Worker::Worker(Environment* env,
+       thread_id_(AllocateEnvironmentThreadId()),
+       name_(name),
+       env_vars_(env_vars),
++      embedder_preload_(env->embedder_preload()),
+       snapshot_data_(snapshot_data) {
+   Debug(this, "Creating new worker instance with thread id %llu",
+         thread_id_.id);
+@@ -354,8 +355,12 @@ void Worker::Run() {
+         }
+ 
+         Debug(this, "Created message port for worker %llu", thread_id_.id);
+-        if (LoadEnvironment(env_.get(), StartExecutionCallback{}).IsEmpty())
++        if (LoadEnvironment(env_.get(),
++                            StartExecutionCallback{},
++                            std::move(embedder_preload_))
++                .IsEmpty()) {
+           return;
++        }
+ 
+         Debug(this, "Loaded environment for worker %llu", thread_id_.id);
+       }
+diff --git a/src/node_worker.h b/src/node_worker.h
+index a77c416735a79feb3f54e40d72a98c8903a20ccd..deab68576f6330f8bcfb4703fd05dbb9c515e473 100644
+--- a/src/node_worker.h
++++ b/src/node_worker.h
+@@ -113,6 +113,7 @@ class Worker : public AsyncWrap {
+ 
+   std::unique_ptr<MessagePortData> child_port_data_;
+   std::shared_ptr<KVStore> env_vars_;
++  EmbedderPreloadCallback embedder_preload_;
+ 
+   // A raw flag that is used by creator and worker threads to
+   // sync up on pre-mature termination of worker  - while in the
+diff --git a/test/cctest/test_environment.cc b/test/cctest/test_environment.cc
+index 09dcb1dccc1b28048c6300e2c23c2c40722272af..54460cd9ecf3c8bbf9927598fcbaf05f5937cf9a 100644
+--- a/test/cctest/test_environment.cc
++++ b/test/cctest/test_environment.cc
+@@ -740,3 +740,31 @@ TEST_F(EnvironmentTest, RequestInterruptAtExit) {
+ 
+   context->Exit();
+ }
++
++TEST_F(EnvironmentTest, EmbedderPreload) {
++  v8::HandleScope handle_scope(isolate_);
++  v8::Local<v8::Context> context = node::NewContext(isolate_);
++  v8::Context::Scope context_scope(context);
++
++  node::EmbedderPreloadCallback preload = [](node::Environment* env,
++                                             v8::Local<v8::Value> process,
++                                             v8::Local<v8::Value> require) {
++    CHECK(process->IsObject());
++    CHECK(require->IsFunction());
++    process.As<v8::Object>()
++        ->Set(env->context(),
++              v8::String::NewFromUtf8Literal(env->isolate(), "prop"),
++              v8::String::NewFromUtf8Literal(env->isolate(), "preload"))
++        .Check();
++  };
++
++  std::unique_ptr<node::Environment, decltype(&node::FreeEnvironment)> env(
++      node::CreateEnvironment(isolate_data_, context, {}, {}),
++      node::FreeEnvironment);
++
++  v8::Local<v8::Value> main_ret =
++      node::LoadEnvironment(env.get(), "return process.prop;", preload)
++          .ToLocalChecked();
++  node::Utf8Value main_ret_str(isolate_, main_ret);
++  EXPECT_EQ(std::string(*main_ret_str), "preload");
++}

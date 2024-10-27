@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Apthorp <nornagon@nornagon.net>
+Date: Mon, 10 Feb 2020 11:52:23 -0800
+Subject: hack plugin response interceptor to point to electron
+
+chrome's streams_private_api does prerender and other things and would
+require a largeish patch to get working, so just redirect it to our
+implementation instead.
+
+diff --git a/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc b/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc
+index eb6f869cffa22f69a16d8ba1e213a7c0664579c4..58d193d20b0019ad09b63dca0be1a14bd647abf8 100644
+--- a/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc
++++ b/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc
+@@ -10,8 +10,8 @@
+ #include "base/feature_list.h"
+ #include "base/functional/bind.h"
+ #include "base/uuid.h"
+-#include "chrome/browser/extensions/api/streams_private/streams_private_api.h"
+-#include "chrome/browser/plugins/plugin_utils.h"
++#include "electron/shell/browser/extensions/api/streams_private/streams_private_api.h"
++#include "electron/shell/browser/plugins/plugin_utils.h"
+ #include "content/public/browser/browser_task_traits.h"
+ #include "content/public/browser/browser_thread.h"
+ #include "content/public/browser/download_utils.h"
