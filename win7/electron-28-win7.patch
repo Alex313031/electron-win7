@@ -1,0 +1,3169 @@
+diff --git a/README.md b/README.md
+index 2fab19e85e..3033157ef9 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,5 @@
++This is a custom build of the Electron framework to run Electron-based web applications that otherwise require Electron binaries that are incompatible with Windows 7/8/8.1. The original ReadMe follows below.
++
+ [![Electron Logo](https://electronjs.org/images/electron-logo.svg)](https://electronjs.org)
+ 
+ [![CircleCI Build Status](https://circleci.com/gh/electron/electron/tree/main.svg?style=shield)](https://circleci.com/gh/electron/electron/tree/main)
+@@ -39,7 +41,7 @@ For more installation options and troubleshooting tips, see
+ Each Electron release provides binaries for macOS, Windows, and Linux.
+ 
+ * macOS (Catalina and up): Electron provides 64-bit Intel and ARM binaries for macOS. Apple Silicon support was added in Electron 11.
+-* Windows (Windows 10 and up): Electron provides `ia32` (`x86`), `x64` (`amd64`), and `arm64` binaries for Windows. Windows on ARM support was added in Electron 5.0.8. Support for Windows 7, 8 and 8.1 was [removed in Electron 23, in line with Chromium's Windows deprecation policy](https://www.electronjs.org/blog/windows-7-to-8-1-deprecation-notice).
++* Windows (Windows 7 and up): Electron provides `ia32` (`x86`), `x64` (`amd64`), and `arm64` binaries for Windows. Windows on ARM support was added in Electron 5.0.8.
+ * Linux: The prebuilt binaries of Electron are built on Ubuntu 20.04. They have also been verified to work on:
+   * Ubuntu 14.04 and newer
+   * Fedora 24 and newer
+diff --git a/docs/breaking-changes.md b/docs/breaking-changes.md
+index edd1c8052e..8046168aff 100644
+--- a/docs/breaking-changes.md
++++ b/docs/breaking-changes.md
+@@ -405,12 +405,6 @@ Additionally, the `customButtonsOnHover` BrowserWindow property previously creat
+ 
+ As a result, if your app uses a frameless window with draggable regions on macOS, the regions which are draggable in your app may change in Electron 23.
+ 
+-### Removed: Windows 7 / 8 / 8.1 support
+-
+-[Windows 7, Windows 8, and Windows 8.1 are no longer supported](https://www.electronjs.org/blog/windows-7-to-8-1-deprecation-notice). Electron follows the planned Chromium deprecation policy, which will [deprecate Windows 7 support beginning in Chromium 109](https://support.google.com/chrome/thread/185534985/sunsetting-support-for-windows-7-8-8-1-in-early-2023?hl=en).
+-
+-Older versions of Electron will continue to run on these operating systems, but Windows 10 or later will be required to run Electron v23.0.0 and higher.
+-
+ ### Removed: BrowserWindow `scroll-touch-*` events
+ 
+ The deprecated `scroll-touch-begin`, `scroll-touch-end` and `scroll-touch-edge`
+diff --git a/docs/tutorial/notifications.md b/docs/tutorial/notifications.md
+index 044d79eb0e..d7e1c58cfe 100644
+--- a/docs/tutorial/notifications.md
++++ b/docs/tutorial/notifications.md
+@@ -97,8 +97,18 @@ are subtle differences.
+ 
+ ### Windows
+ 
+-For notifications on Windows, your Electron app needs to have a Start Menu shortcut with an
+-[AppUserModelID][app-user-model-id] and a corresponding [ToastActivatorCLSID][toast-activator-clsid].
++* On Windows 10, a shortcut to your app with an
++[Application User Model ID][app-user-model-id] must be installed to the
++Start Menu. This can be overkill during development, so adding
++`node_modules\electron\dist\electron.exe` to your Start Menu also does the
++trick. Navigate to the file in Explorer, right-click and 'Pin to Start Menu'.
++You will then need to add the line `app.setAppUserModelId(process.execPath)` to
++your main process to see notifications.
++* On Windows 8.1 and Windows 8, a shortcut to your app with an [Application User
++Model ID][app-user-model-id] must be installed to the Start screen. Note,
++however, that it does not need to be pinned to the Start screen.
++* On Windows 7, notifications work via a custom implementation which visually
++resembles the native one on newer systems.
+ 
+ Electron attempts to automate the work around the AppUserModelID and ToastActivatorCLSID. When
+ Electron is used together with Squirrel.Windows (e.g. if you're using electron-winstaller),
+@@ -108,7 +118,13 @@ In production, Electron will also detect that Squirrel was used and will automat
+ `app.setAppUserModelId()` with the correct value. During development, you may have
+ to call [`app.setAppUserModelId()`][set-app-user-model-id] yourself.
+ 
+-:::info Notifications in development
++Furthermore, in Windows 8, the maximum length for the notification body is 250
++characters, with the Windows team recommending that notifications should be kept
++to 200 characters. That said, that limitation has been removed in Windows 10, with
++the Windows team asking developers to be reasonable. Attempting to send gigantic
++amounts of text to the API (thousands of characters) might result in instability.
++
++#### Advanced Notifications
+ 
+ To quickly bootstrap notifications during development, adding
+ `node_modules\electron\dist\electron.exe` to your Start Menu also does the
+@@ -166,7 +182,6 @@ GNOME, and KDE.
+ [app-user-model-id]: https://learn.microsoft.com/en-us/windows/win32/shell/appids
+ [set-app-user-model-id]: ../api/app.md#appsetappusermodelidid-windows
+ [squirrel-events]: https://github.com/electron/windows-installer/blob/main/README.md#handling-squirrel-events
+-[toast-activator-clsid]: https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-toastactivatorclsid
+ [apple-notification-guidelines]: https://developer.apple.com/design/human-interface-guidelines/notifications
+ [windows-notification-state]: https://github.com/felixrieseberg/windows-notification-state
+ [macos-notification-state]: https://github.com/felixrieseberg/macos-notification-state
+diff --git a/filenames.gni b/filenames.gni
+index fd3161b225..8681febd6d 100644
+--- a/filenames.gni
++++ b/filenames.gni
+@@ -73,6 +73,17 @@ filenames = {
+     "shell/browser/native_window_views_win.cc",
+     "shell/browser/notifications/win/notification_presenter_win.cc",
+     "shell/browser/notifications/win/notification_presenter_win.h",
++    "shell/browser/notifications/win/notification_presenter_win7.cc",
++    "shell/browser/notifications/win/notification_presenter_win7.h",
++    "shell/browser/notifications/win/win32_desktop_notifications/common.h",
++    "shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.cc",
++    "shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.h",
++    "shell/browser/notifications/win/win32_desktop_notifications/toast_uia.cc",
++    "shell/browser/notifications/win/win32_desktop_notifications/toast_uia.h",
++    "shell/browser/notifications/win/win32_desktop_notifications/toast.cc",
++    "shell/browser/notifications/win/win32_desktop_notifications/toast.h",
++    "shell/browser/notifications/win/win32_notification.cc",
++    "shell/browser/notifications/win/win32_notification.h",
+     "shell/browser/notifications/win/windows_toast_notification.cc",
+     "shell/browser/notifications/win/windows_toast_notification.h",
+     "shell/browser/relauncher_win.cc",
+diff --git a/patches/chromium/.patches b/patches/chromium/.patches
+index 2e5f102935..3464e5c425 100644
+--- a/patches/chromium/.patches
++++ b/patches/chromium/.patches
+@@ -10,7 +10,6 @@ render_widget_host_view_base.patch
+ render_widget_host_view_mac.patch
+ webview_cross_drag.patch
+ gin_enable_disable_v8_platform.patch
+-enable_reset_aspect_ratio.patch
+ boringssl_build_gn.patch
+ pepper_plugin_support.patch
+ gtk_visibility.patch
+@@ -36,7 +35,6 @@ printing.patch
+ support_mixed_sandbox_with_zygote.patch
+ unsandboxed_ppapi_processes_skip_zygote.patch
+ build_add_electron_tracing_category.patch
+-worker_context_will_destroy.patch
+ frame_host_manager.patch
+ crashpad_pid_check.patch
+ network_service_allow_remote_certificate_verification_logic.patch
+@@ -44,7 +42,6 @@ disable_color_correct_rendering.patch
+ add_contentgpuclient_precreatemessageloop_callback.patch
+ picture-in-picture.patch
+ disable_compositor_recycling.patch
+-allow_new_privileges_in_unsandboxed_child_processes.patch
+ expose_setuseragent_on_networkcontext.patch
+ feat_add_set_theme_source_to_allow_apps_to.patch
+ add_webmessageportconverter_entangleandinjectmessageportchannel.patch
+@@ -82,7 +79,6 @@ hack_to_allow_gclient_sync_with_host_os_mac_on_linux_in_ci.patch
+ logging_win32_only_create_a_console_if_logging_to_stderr.patch
+ fix_media_key_usage_with_globalshortcuts.patch
+ feat_expose_raw_response_headers_from_urlloader.patch
+-process_singleton.patch
+ add_ui_scopedcliboardwriter_writeunsaferawdata.patch
+ feat_add_data_parameter_to_processsingleton.patch
+ load_v8_snapshot_in_browser_process.patch
+@@ -100,7 +96,6 @@ feat_filter_out_non-shareable_windows_in_the_current_application_in.patch
+ disable_freezing_flags_after_init_in_node.patch
+ short-circuit_permissions_checks_in_mediastreamdevicescontroller.patch
+ chore_add_electron_deps_to_gitignores.patch
+-chore_allow_chromium_to_handle_synthetic_mouse_events_for_touch.patch
+ add_maximized_parameter_to_linuxui_getwindowframeprovider.patch
+ add_electron_deps_to_license_credits_file.patch
+ fix_crash_loading_non-standard_schemes_in_iframes.patch
+@@ -109,7 +104,6 @@ feat_configure_launch_options_for_service_process.patch
+ feat_ensure_mas_builds_of_the_same_application_can_use_safestorage.patch
+ fix_on-screen-keyboard_hides_on_input_blur_in_webview.patch
+ preconnect_manager.patch
+-fix_remove_caption-removing_style_call.patch
+ build_allow_electron_to_use_exec_script.patch
+ build_only_use_the_mas_build_config_in_the_required_components.patch
+ chore_introduce_blocking_api_for_electron.patch
+diff --git a/patches/chromium/chore_allow_chromium_to_handle_synthetic_mouse_events_for_touch.patch b/patches/chromium/chore_allow_chromium_to_handle_synthetic_mouse_events_for_touch.patch
+index 4545f7831e..973a7a8361 100644
+--- a/patches/chromium/chore_allow_chromium_to_handle_synthetic_mouse_events_for_touch.patch
++++ b/patches/chromium/chore_allow_chromium_to_handle_synthetic_mouse_events_for_touch.patch
+@@ -60,12 +60,12 @@ index d46dd18609a4d14410a5cf973f9ec690e873051f..1bef90fe94f1024f4d9c1f198cd55ec1
+    }
+  
+ diff --git a/ui/views/win/hwnd_message_handler_delegate.h b/ui/views/win/hwnd_message_handler_delegate.h
+-index fde18715e33ee67f64740ebda7c641954360483c..cf1ea75f8e9dd1d95045736959c4f3ca1a27a1ab 100644
++index 233dd12f86c20a7f5169caab998993f614e8bc7e..3bf6fc95a653f1783510378ffeef5b18da42e559 100644
+ --- a/ui/views/win/hwnd_message_handler_delegate.h
+ +++ b/ui/views/win/hwnd_message_handler_delegate.h
+-@@ -255,6 +255,10 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
+-   // Called when the headless window bounds has changed.
+-   virtual void HandleHeadlessWindowBoundsChanged(const gfx::Rect& bounds) = 0;
++@@ -258,6 +258,10 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
++   // Called when the window scale factor has changed.
++   virtual void HandleWindowScaleFactorChanged(float window_scale_factor) = 0;
+  
+ +  // Called when synthetic mouse event is generated for touch event on
+ +  // caption buttons.
+diff --git a/patches/chromium/disable-redraw-lock.patch b/patches/chromium/disable-redraw-lock.patch
+new file mode 100644
+index 0000000000..8be77fd422
+--- /dev/null
++++ b/patches/chromium/disable-redraw-lock.patch
+@@ -0,0 +1,78 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Heilig Benedek <benecene@gmail.com>
++Date: Thu, 20 Sep 2018 17:47:54 -0700
++Subject: disable-redraw-lock.patch
++
++Chromium uses a custom window titlebar implementation on Windows when DWM
++is disabled (Windows 7 and earlier, non Aero theme). The native titlebar
++sometimes painted over this custom titlebar, so a workaround was put in
++place to lock redraws in reaction to certain events if DWM is disabled,
++since the code assumes that in that case, the custom titlebar is painted.
++Electron forces the use of the native titlebar, which the workaround doesn't
++take into account, and still locks redraws, causing weird repainting issues
++in electron (and other applications). This patch provides a way to disable
++the redraw locking mechanism, which fixes these issues. The electron issue
++can be found at https://github.com/electron/electron/issues/1821
++
++diff --git a/ui/views/win/hwnd_message_handler.cc b/ui/views/win/hwnd_message_handler.cc
++index ec39cb0d15c80f051e89bf4d0f05368dff897fa7..472090adb19411366c50ed8e5a2f1276bc0a47eb 100644
++--- a/ui/views/win/hwnd_message_handler.cc
+++++ b/ui/views/win/hwnd_message_handler.cc
++@@ -311,6 +311,10 @@ constexpr int kSynthesizedMouseMessagesTimeDifference = 500;
++
++ }  // namespace
++
+++bool HWNDMessageHandlerDelegate::HasNativeFrame() const {
+++  return false;
+++}
+++
++ // A scoping class that prevents a window from being able to redraw in response
++ // to invalidations that may occur within it for the lifetime of the object.
++ //
++@@ -361,7 +365,8 @@ class HWNDMessageHandler::ScopedRedrawLock {
++         hwnd_(owner_->hwnd()),
++         cancel_unlock_(false),
++         should_lock_(owner_->IsVisible() && !owner->HasChildRenderingWindow() &&
++-                     ::IsWindow(hwnd_) && !owner_->IsHeadless() &&
+++                     ::IsWindow(hwnd_) && !owner_->HasNativeFrame() &&
+++                     !owner_->IsHeadless() &&
++                      (!(GetWindowLong(hwnd_, GWL_STYLE) & WS_CAPTION) ||
++                       !ui::win::IsAeroGlassEnabled())) {
++     if (should_lock_)
++@@ -1057,6 +1062,10 @@ HWNDMessageHandler::RegisterUnadjustedMouseEvent() {
++   return scoped_enable;
++ }
++
+++bool HWNDMessageHandler::HasNativeFrame() {
+++  return delegate_->HasNativeFrame();
+++}
+++
++ ////////////////////////////////////////////////////////////////////////////////
++ // HWNDMessageHandler, gfx::WindowImpl overrides:
++
++diff --git a/ui/views/win/hwnd_message_handler.h b/ui/views/win/hwnd_message_handler.h
++index e93d1727cbd8263d3b68e539856a577585a6092c..6d0adb7b5febc5625073312e7f1d557f89927ac8 100644
++--- a/ui/views/win/hwnd_message_handler.h
+++++ b/ui/views/win/hwnd_message_handler.h
++@@ -210,6 +210,8 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
++   using TouchIDs = std::set<DWORD>;
++   enum class DwmFrameState { kOff, kOn };
++
+++  bool HasNativeFrame();
+++
++   // Overridden from WindowImpl:
++   HICON GetDefaultWindowIcon() const override;
++   HICON GetSmallWindowIcon() const override;
++diff --git a/ui/views/win/hwnd_message_handler_delegate.h b/ui/views/win/hwnd_message_handler_delegate.h
++index 08e46c7b92f6cbe95c9cb524d09a6ed9e89ecf00..233dd12f86c20a7f5169caab998993f614e8bc7e 100644
++--- a/ui/views/win/hwnd_message_handler_delegate.h
+++++ b/ui/views/win/hwnd_message_handler_delegate.h
++@@ -46,6 +46,8 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
++   // True if the widget associated with this window has a non-client view.
++   virtual bool HasNonClientView() const = 0;
++
+++  virtual bool HasNativeFrame() const;
+++
++   // Returns who we want to be drawing the frame. Either the system (Windows)
++   // will handle it or Chrome will custom draw it.
++   virtual FrameMode GetFrameMode() const = 0;
+diff --git a/patches/node/.patches b/patches/node/.patches
+index 35cae80008..0a90b7b9f4 100644
+--- a/patches/node/.patches
++++ b/patches/node/.patches
+@@ -11,6 +11,7 @@ fix_handle_boringssl_and_openssl_incompatibilities.patch
+ fix_crypto_tests_to_run_with_bssl.patch
+ fix_account_for_debugger_agent_race_condition.patch
+ fix_readbarrier_undefined_symbol_error_on_woa_arm64.patch
++fix_crash_caused_by_gethostnamew_on_windows_7.patch
+ fix_suppress_clang_-wdeprecated-declarations_in_libuv.patch
+ fix_serdes_test.patch
+ feat_add_knostartdebugsignalhandler_to_environment_to_prevent.patch
+diff --git a/patches/node/fix_crash_caused_by_gethostnamew_on_windows_7.patch b/patches/node/fix_crash_caused_by_gethostnamew_on_windows_7.patch
+new file mode 100644
+index 0000000000..b30a25f821
+--- /dev/null
++++ b/patches/node/fix_crash_caused_by_gethostnamew_on_windows_7.patch
+@@ -0,0 +1,182 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Cheng Zhao <zcbenz@gmail.com>
++Date: Fri, 12 Nov 2021 17:25:37 +0900
++Subject: fix: crash caused by GetHostNameW on Windows 7
++
++Backported from https://github.com/libuv/libuv/pull/3285.
++
++diff --git a/deps/uv/src/win/util.c b/deps/uv/src/win/util.c
++index 33e874ac442f88b58d2b68c8ec9764f6f664552e..37ece5e2867ab836492a8b7faa0aa5e1b8e562f0 100644
++--- a/deps/uv/src/win/util.c
+++++ b/deps/uv/src/win/util.c
++@@ -37,6 +37,7 @@
++ #include <psapi.h>
++ #include <tlhelp32.h>
++ #include <windows.h>
+++#include <svcguid.h>
++ /* clang-format on */
++ #include <userenv.h>
++ #include <math.h>
++@@ -56,6 +57,10 @@
++ /* The number of nanoseconds in one second. */
++ #define UV__NANOSEC 1000000000
++
+++/* Local buffer size for WSAQUERYSETW data inside uv__gethostnamew_nt60
+++   sizeof(WSAQUERYSETW) + 512 = 632 bytes to match GetHostNameW behavior */
+++#define WSAQ_LOCAL_BUF_LEN (sizeof(WSAQUERYSETW) + 512)
+++
++ /* Max user name length, from iphlpapi.h */
++ #ifndef UNLEN
++ # define UNLEN 256
++@@ -72,6 +77,11 @@ static CRITICAL_SECTION process_title_lock;
++ /* Frequency of the high-resolution clock. */
++ static uint64_t hrtime_frequency_ = 0;
++
+++/* Parameters for WSAQUERYSETW inside uv__gethostnamew_nt60 */
+++static GUID guid_host_name = SVCID_HOSTNAME;
+++static AFPROTOCOLS af_protocols[2] = { {AF_INET, IPPROTO_UDP},
+++                                       {AF_INET, IPPROTO_TCP} };
+++
++
++ /*
++  * One-time initialization code for functionality defined in util.c.
++@@ -1663,6 +1673,125 @@ int uv_os_unsetenv(const char* name) {
++ }
++
++
+++static int WSAAPI uv__gethostnamew_nt60(PWSTR name, int name_len) {
+++  int result_len;
+++  int error_code = NO_ERROR;
+++
+++  /* WSALookupService stuff
+++   * Avoid dynamic memory allocation if possible */
+++  CHAR local_buf[WSAQ_LOCAL_BUF_LEN];
+++  DWORD dwlen = WSAQ_LOCAL_BUF_LEN;
+++  WSAQUERYSETW* pwsaq;
+++  /* hostname returned from WSALookupService stage */
+++  WCHAR* result_name = NULL;
+++  /* WSALookupService handle */
+++  HANDLE hlookup;
+++  /* Fallback to heap allocation if stack buffer is too small */
+++  WSAQUERYSETW* heap_data = NULL;
+++
+++  /* check input */
+++  if (name == NULL) {
+++    error_code = WSAEFAULT;
+++    goto cleanup;
+++  }
+++
+++  /*
+++   * Stage 1: Check environment variable
+++   * _CLUSTER_NETWORK_NAME_ len == ComputeName(NETBIOS) len.
+++   * i.e 15 characters + null.
+++   * It overrides the actual hostname, so application can
+++   * work when network name and computer name are different
+++   */
+++  result_len = GetEnvironmentVariableW(L"_CLUSTER_NETWORK_NAME_",
+++                                       name,
+++                                       name_len);
+++  if (result_len != 0) {
+++    if (result_len > name_len) {
+++      error_code = WSAEFAULT;
+++    }
+++    goto cleanup;
+++  }
+++
+++  /* Stage 2: Do normal lookup through WSALookupServiceLookup */
+++  pwsaq = (WSAQUERYSETW*) local_buf;
+++  memset(pwsaq, 0, sizeof(*pwsaq));
+++  pwsaq->dwSize                  = sizeof(*pwsaq);
+++  pwsaq->lpszServiceInstanceName = NULL;
+++  pwsaq->lpServiceClassId        = &guid_host_name;
+++  pwsaq->dwNameSpace             = NS_ALL;
+++  pwsaq->lpafpProtocols          = &af_protocols[0];
+++  pwsaq->dwNumberOfProtocols     = 2;
+++
+++  error_code = WSALookupServiceBeginW(pwsaq, LUP_RETURN_NAME, &hlookup);
+++  if (error_code == NO_ERROR) {
+++    /* Try stack allocation first */
+++    error_code = WSALookupServiceNextW(hlookup, 0, &dwlen, pwsaq);
+++    if (error_code == NO_ERROR) {
+++      result_name = pwsaq->lpszServiceInstanceName;
+++    } else {
+++      error_code = WSAGetLastError();
+++
+++      if (error_code == WSAEFAULT) {
+++        /* Should never happen */
+++        assert(sizeof(CHAR) * dwlen >= sizeof(WSAQUERYSETW));
+++
+++        /* Fallback to the heap allocation */
+++        heap_data = uv__malloc(sizeof(CHAR) * (size_t) dwlen);
+++        if (heap_data != NULL) {
+++          error_code = WSALookupServiceNextW(hlookup, 0, &dwlen, heap_data);
+++          if (error_code == NO_ERROR) {
+++            result_name = heap_data->lpszServiceInstanceName;
+++          } else {
+++            error_code = WSAGetLastError();
+++          }
+++        } else {
+++          error_code = WSA_NOT_ENOUGH_MEMORY;
+++        }
+++      }
+++    }
+++
+++    WSALookupServiceEnd(hlookup);
+++
+++    if (error_code != NO_ERROR) {
+++      WSASetLastError(error_code);
+++    }
+++  }
+++
+++  if (result_name != NULL) {
+++    size_t wlen = wcslen(result_name) + 1;
+++
+++    if (wlen <= (size_t) name_len) {
+++      wmemcpy(name, result_name, wlen);
+++    } else {
+++      error_code = WSAEFAULT;
+++    }
+++    goto cleanup;
+++  }
+++
+++  /* Stage 3: If WSALookupServiceLookup fails, fallback to GetComputerName */
+++  result_len = name_len;
+++  /* Reset error code */
+++  error_code = NO_ERROR;
+++
+++  if (GetComputerNameW(name, (PDWORD)&result_len) == FALSE) {
+++    error_code = WSAENETDOWN;
+++    if (result_len >= name_len) {
+++      error_code = WSAEFAULT;
+++    }
+++  }
+++
+++cleanup:
+++  uv__free(heap_data);
+++
+++  if (error_code == NO_ERROR) {
+++    return NO_ERROR;
+++  } else {
+++    WSASetLastError(error_code);
+++    return SOCKET_ERROR;
+++  }
+++}
+++
+++
++ int uv_os_gethostname(char* buffer, size_t* size) {
++   WCHAR buf[UV_MAXHOSTNAMESIZE];
++   size_t len;
++@@ -1674,10 +1803,10 @@ int uv_os_gethostname(char* buffer, size_t* size) {
++
++   uv__once_init(); /* Initialize winsock */
++
++-  if (pGetHostNameW == NULL)
++-    return UV_ENOSYS;
+++  uv_sGetHostNameW gethostnamew =
+++      pGetHostNameW == NULL ? uv__gethostnamew_nt60 : pGetHostNameW;
++
++-  if (pGetHostNameW(buf, UV_MAXHOSTNAMESIZE) != 0)
+++  if (gethostnamew(buf, UV_MAXHOSTNAMESIZE) != 0)
++     return uv_translate_sys_error(WSAGetLastError());
++
++   convert_result = uv__convert_utf16_to_utf8(buf, -1, &utf8_str);
+diff --git a/patches/node/fix_suppress_clang_-wdeprecated-declarations_in_libuv.patch b/patches/node/fix_suppress_clang_-wdeprecated-declarations_in_libuv.patch
+index 0c287b3ad3..a6ae065079 100644
+--- a/patches/node/fix_suppress_clang_-wdeprecated-declarations_in_libuv.patch
++++ b/patches/node/fix_suppress_clang_-wdeprecated-declarations_in_libuv.patch
+@@ -6,10 +6,10 @@ Subject: fix: suppress clang -Wdeprecated-declarations in libuv
+ Should be upstreamed.
+ 
+ diff --git a/deps/uv/src/win/util.c b/deps/uv/src/win/util.c
+-index 99432053cc3b242e514268b7aba2e2d83a9e64f2..750a5424953aad104ba1e865fefd55d316485917 100644
++index 37ece5e2867ab836492a8b7faa0aa5e1b8e562f0..d50296728f7e0810064647125a469f3ed714f8ea 100644
+ --- a/deps/uv/src/win/util.c
+ +++ b/deps/uv/src/win/util.c
+-@@ -1743,10 +1743,17 @@ int uv_os_uname(uv_utsname_t* buffer) {
++@@ -1950,10 +1950,17 @@ int uv_os_uname(uv_utsname_t* buffer) {
+      #ifdef _MSC_VER
+      #pragma warning(suppress : 4996)
+      #endif
+diff --git a/shell/browser/api/electron_api_power_monitor_win.cc b/shell/browser/api/electron_api_power_monitor_win.cc
+index a7f1acfdf0..1f1b091331 100644
+--- a/shell/browser/api/electron_api_power_monitor_win.cc
++++ b/shell/browser/api/electron_api_power_monitor_win.cc
+@@ -44,8 +44,15 @@ void PowerMonitor::InitPlatformSpecificMonitors() {
+ 
+   // For Windows 8 and later, a new "connected standby" mode has been added and
+   // we must explicitly register for its notifications.
+-  RegisterSuspendResumeNotification(static_cast<HANDLE>(window_),
+-                                    DEVICE_NOTIFY_WINDOW_HANDLE);
++  auto RegisterSuspendResumeNotification =
++      reinterpret_cast<decltype(&::RegisterSuspendResumeNotification)>(
++          GetProcAddress(GetModuleHandle(L"user32.dll"),
++                         "RegisterSuspendResumeNotification"));
++
++  if (RegisterSuspendResumeNotification) {
++    RegisterSuspendResumeNotification(static_cast<HANDLE>(window_),
++                                      DEVICE_NOTIFY_WINDOW_HANDLE);
++  }
+ }
+ 
+ LRESULT CALLBACK PowerMonitor::WndProcStatic(HWND hwnd,
+diff --git a/shell/browser/browser_win.cc b/shell/browser/browser_win.cc
+index 0bbf9b5e30..041e47a996 100644
+--- a/shell/browser/browser_win.cc
++++ b/shell/browser/browser_win.cc
+@@ -92,6 +92,10 @@ bool IsValidCustomProtocol(const std::wstring& scheme) {
+ // takes in an assoc_str
+ // (https://docs.microsoft.com/en-us/windows/win32/api/shlwapi/ne-shlwapi-assocstr)
+ // and returns the application name, icon and path that handles the protocol.
++//
++// Windows 8 introduced a new protocol->executable binding system which cannot
++// be retrieved in the HKCR registry subkey method implemented below. We call
++// AssocQueryString with the new Win8-only flag ASSOCF_IS_PROTOCOL instead.
+ std::wstring GetAppInfoHelperForProtocol(ASSOCSTR assoc_str, const GURL& url) {
+   const std::wstring url_scheme = base::ASCIIToWide(url.scheme());
+   if (!IsValidCustomProtocol(url_scheme))
+@@ -134,6 +138,34 @@ std::wstring GetAppPathForProtocol(const GURL& url) {
+   return GetAppInfoHelperForProtocol(ASSOCSTR_EXECUTABLE, url);
+ }
+ 
++std::wstring GetAppForProtocolUsingRegistry(const GURL& url) {
++  const std::wstring url_scheme = base::ASCIIToWide(url.scheme());
++  if (!IsValidCustomProtocol(url_scheme))
++    return std::wstring();
++
++  // First, try and extract the application's display name.
++  std::wstring command_to_launch;
++  base::win::RegKey cmd_key_name(HKEY_CLASSES_ROOT, url_scheme.c_str(),
++                                 KEY_READ);
++  if (cmd_key_name.ReadValue(NULL, &command_to_launch) == ERROR_SUCCESS &&
++      !command_to_launch.empty()) {
++    return command_to_launch;
++  }
++
++  // Otherwise, parse the command line in the registry, and return the basename
++  // of the program path if it exists.
++  const std::wstring cmd_key_path = url_scheme + L"\\shell\\open\\command";
++  base::win::RegKey cmd_key_exe(HKEY_CLASSES_ROOT, cmd_key_path.c_str(),
++                                KEY_READ);
++  if (cmd_key_exe.ReadValue(NULL, &command_to_launch) == ERROR_SUCCESS) {
++    base::CommandLine command_line(
++        base::CommandLine::FromString(command_to_launch));
++    return command_line.GetProgram().BaseName().value();
++  }
++
++  return std::wstring();
++}
++
+ bool FormatCommandLineString(std::wstring* exe,
+                              const std::vector<std::u16string>& launch_args) {
+   if (exe->empty() && !GetProcessExecPath(exe)) {
+@@ -283,6 +315,42 @@ void GetFileIcon(const base::FilePath& path,
+   }
+ }
+ 
++void GetApplicationInfoForProtocolUsingRegistry(
++    v8::Isolate* isolate,
++    const GURL& url,
++    gin_helper::Promise<gin_helper::Dictionary> promise,
++    base::CancelableTaskTracker* cancelable_task_tracker_) {
++  base::FilePath app_path;
++
++  const std::wstring url_scheme = base::ASCIIToWide(url.scheme());
++  if (!IsValidCustomProtocol(url_scheme)) {
++    promise.RejectWithErrorMessage("invalid url_scheme");
++    return;
++  }
++  std::wstring command_to_launch;
++  const std::wstring cmd_key_path = url_scheme + L"\\shell\\open\\command";
++  base::win::RegKey cmd_key_exe(HKEY_CLASSES_ROOT, cmd_key_path.c_str(),
++                                KEY_READ);
++  if (cmd_key_exe.ReadValue(NULL, &command_to_launch) == ERROR_SUCCESS) {
++    base::CommandLine command_line(
++        base::CommandLine::FromString(command_to_launch));
++    app_path = command_line.GetProgram();
++  } else {
++    promise.RejectWithErrorMessage(
++        "Unable to retrieve installation path to app");
++    return;
++  }
++  const std::wstring app_display_name = GetAppForProtocolUsingRegistry(url);
++
++  if (app_display_name.empty()) {
++    promise.RejectWithErrorMessage(
++        "Unable to retrieve application display name");
++    return;
++  }
++  GetFileIcon(app_path, isolate, cancelable_task_tracker_, app_display_name,
++              std::move(promise));
++}
++
+ // resolves `Promise<Object>` - Resolve with an object containing the following:
+ // * `icon` NativeImage - the display icon of the app handling the protocol.
+ // * `path` String  - installation path of the app handling the protocol.
+@@ -502,7 +570,14 @@ bool Browser::IsDefaultProtocolClient(const std::string& protocol,
+ }
+ 
+ std::u16string Browser::GetApplicationNameForProtocol(const GURL& url) {
+-  return base::WideToUTF16(GetAppDisplayNameForProtocol(url));
++  // Windows 8 or above has a new protocol association query.
++  if (base::win::GetVersion() >= base::win::Version::WIN8) {
++    std::wstring application_name = GetAppDisplayNameForProtocol(url);
++    if (!application_name.empty())
++      return base::WideToUTF16(application_name);
++  }
++
++  return base::WideToUTF16(GetAppForProtocolUsingRegistry(url));
+ }
+ 
+ v8::Local<v8::Promise> Browser::GetApplicationInfoForProtocol(
+@@ -511,8 +586,15 @@ v8::Local<v8::Promise> Browser::GetApplicationInfoForProtocol(
+   gin_helper::Promise<gin_helper::Dictionary> promise(isolate);
+   v8::Local<v8::Promise> handle = promise.GetHandle();
+ 
+-  GetApplicationInfoForProtocolUsingAssocQuery(isolate, url, std::move(promise),
+-                                               &cancelable_task_tracker_);
++  // Windows 8 or above has a new protocol association query.
++  if (base::win::GetVersion() >= base::win::Version::WIN8) {
++    GetApplicationInfoForProtocolUsingAssocQuery(
++        isolate, url, std::move(promise), &cancelable_task_tracker_);
++    return handle;
++  }
++
++  GetApplicationInfoForProtocolUsingRegistry(isolate, url, std::move(promise),
++                                             &cancelable_task_tracker_);
+   return handle;
+ }
+ 
+diff --git a/shell/browser/notifications/win/notification_presenter_win.cc b/shell/browser/notifications/win/notification_presenter_win.cc
+index 407250614d..604a8a7710 100644
+--- a/shell/browser/notifications/win/notification_presenter_win.cc
++++ b/shell/browser/notifications/win/notification_presenter_win.cc
+@@ -18,6 +18,7 @@
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/time/time.h"
+ #include "base/win/windows_version.h"
++#include "shell/browser/notifications/win/notification_presenter_win7.h"
+ #include "shell/browser/notifications/win/windows_toast_notification.h"
+ #include "shell/common/thread_restrictions.h"
+ #include "third_party/skia/include/core/SkBitmap.h"
+@@ -47,6 +48,9 @@ bool SaveIconToPath(const SkBitmap& bitmap, const base::FilePath& path) {
+ 
+ // static
+ NotificationPresenter* NotificationPresenter::Create() {
++  auto version = base::win::GetVersion();
++  if (version < base::win::Version::WIN8)
++    return new NotificationPresenterWin7;
+   if (!WindowsToastNotification::Initialize())
+     return nullptr;
+   auto presenter = std::make_unique<NotificationPresenterWin>();
+diff --git a/shell/browser/notifications/win/notification_presenter_win7.cc b/shell/browser/notifications/win/notification_presenter_win7.cc
+new file mode 100644
+index 0000000000..721d96e24b
+--- /dev/null
++++ b/shell/browser/notifications/win/notification_presenter_win7.cc
+@@ -0,0 +1,54 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#include "shell/browser/notifications/win/notification_presenter_win7.h"
++
++#include <string>
++
++#include "shell/browser/notifications/win/win32_notification.h"
++
++namespace electron {
++
++electron::Notification* NotificationPresenterWin7::CreateNotificationObject(
++    NotificationDelegate* delegate) {
++  return new Win32Notification(delegate, this);
++}
++
++Win32Notification* NotificationPresenterWin7::GetNotificationObjectByRef(
++    const DesktopNotificationController::Notification& ref) {
++  for (auto* n : this->notifications()) {
++    auto* w32n = static_cast<Win32Notification*>(n);
++    if (w32n->GetRef() == ref)
++      return w32n;
++  }
++
++  return nullptr;
++}
++
++Win32Notification* NotificationPresenterWin7::GetNotificationObjectByTag(
++    const std::string& tag) {
++  for (auto* n : this->notifications()) {
++    auto* w32n = static_cast<Win32Notification*>(n);
++    if (w32n->GetTag() == tag)
++      return w32n;
++  }
++
++  return nullptr;
++}
++
++void NotificationPresenterWin7::OnNotificationClicked(
++    const Notification& notification) {
++  auto* n = GetNotificationObjectByRef(notification);
++  if (n)
++    n->NotificationClicked();
++}
++
++void NotificationPresenterWin7::OnNotificationDismissed(
++    const Notification& notification) {
++  auto* n = GetNotificationObjectByRef(notification);
++  if (n)
++    n->NotificationDismissed();
++}
++
++}  // namespace electron
+diff --git a/shell/browser/notifications/win/notification_presenter_win7.h b/shell/browser/notifications/win/notification_presenter_win7.h
+new file mode 100644
+index 0000000000..6c03839e62
+--- /dev/null
++++ b/shell/browser/notifications/win/notification_presenter_win7.h
+@@ -0,0 +1,37 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_NOTIFICATION_PRESENTER_WIN7_H_
++#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_NOTIFICATION_PRESENTER_WIN7_H_
++
++#include <string>
++
++#include "shell/browser/notifications/notification_presenter.h"
++#include "shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.h"
++
++namespace electron {
++
++class Win32Notification;
++
++class NotificationPresenterWin7 : public NotificationPresenter,
++                                  public DesktopNotificationController {
++ public:
++  NotificationPresenterWin7() = default;
++
++  Win32Notification* GetNotificationObjectByRef(
++      const DesktopNotificationController::Notification& ref);
++
++  Win32Notification* GetNotificationObjectByTag(const std::string& tag);
++
++ private:
++  electron::Notification* CreateNotificationObject(
++      NotificationDelegate* delegate) override;
++
++  void OnNotificationClicked(const Notification& notification) override;
++  void OnNotificationDismissed(const Notification& notification) override;
++};
++
++}  // namespace electron
++
++#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_NOTIFICATION_PRESENTER_WIN7_H_
+diff --git a/shell/browser/notifications/win/win32_desktop_notifications/common.h b/shell/browser/notifications/win/win32_desktop_notifications/common.h
+new file mode 100644
+index 0000000000..cea5e57d13
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_desktop_notifications/common.h
+@@ -0,0 +1,70 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_COMMON_H_
++#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_COMMON_H_
++
++#include <Windows.h>
++
++#include "base/memory/raw_ptr.h"
++
++namespace electron {
++
++struct NotificationData {
++  raw_ptr<DesktopNotificationController> controller = nullptr;
++
++  std::u16string caption;
++  std::u16string body_text;
++  HBITMAP image = NULL;
++
++  NotificationData() = default;
++
++  ~NotificationData() {
++    if (image)
++      DeleteObject(image);
++  }
++
++  NotificationData(const NotificationData& other) = delete;
++  NotificationData& operator=(const NotificationData& other) = delete;
++};
++
++template <typename T>
++constexpr T ScaleForDpi(T value, unsigned dpi, unsigned source_dpi = 96) {
++  return value * dpi / source_dpi;
++}
++
++struct ScreenMetrics {
++  UINT dpi_x, dpi_y;
++
++  ScreenMetrics() {
++    typedef HRESULT WINAPI GetDpiForMonitor_t(HMONITOR, int, UINT*, UINT*);
++
++    auto GetDpiForMonitor = reinterpret_cast<GetDpiForMonitor_t*>(
++        GetProcAddress(GetModuleHandle(TEXT("shcore")), "GetDpiForMonitor"));
++
++    if (GetDpiForMonitor) {
++      auto* monitor = MonitorFromPoint({}, MONITOR_DEFAULTTOPRIMARY);
++      if (GetDpiForMonitor(monitor, 0, &dpi_x, &dpi_y) == S_OK)
++        return;
++    }
++
++    HDC hdc = GetDC(NULL);
++    dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
++    dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
++    ReleaseDC(NULL, hdc);
++  }
++
++  template <class T>
++  T X(T value) const {
++    return ScaleForDpi(value, dpi_x);
++  }
++  template <class T>
++  T Y(T value) const {
++    return ScaleForDpi(value, dpi_y);
++  }
++};
++
++}  // namespace electron
++
++#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_COMMON_H_
+diff --git a/shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.cc b/shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.cc
+new file mode 100644
+index 0000000000..03e435baee
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.cc
+@@ -0,0 +1,436 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++
++#include "shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.h"
++
++#include <windowsx.h>
++#include <algorithm>
++#include <utility>
++
++#include "base/check.h"
++#include "shell/browser/notifications/win/win32_desktop_notifications/common.h"
++#include "shell/browser/notifications/win/win32_desktop_notifications/toast.h"
++
++namespace electron {
++
++HBITMAP CopyBitmap(HBITMAP bitmap) {
++  HBITMAP ret = NULL;
++
++  BITMAP bm;
++  if (bitmap && GetObject(bitmap, sizeof(bm), &bm)) {
++    HDC hdc_screen = GetDC(NULL);
++    ret = CreateCompatibleBitmap(hdc_screen, bm.bmWidth, bm.bmHeight);
++    ReleaseDC(NULL, hdc_screen);
++
++    if (ret) {
++      HDC hdc_src = CreateCompatibleDC(NULL);
++      HDC hdc_dst = CreateCompatibleDC(NULL);
++      SelectBitmap(hdc_src, bitmap);
++      SelectBitmap(hdc_dst, ret);
++      BitBlt(hdc_dst, 0, 0, bm.bmWidth, bm.bmHeight, hdc_src, 0, 0, SRCCOPY);
++      DeleteDC(hdc_dst);
++      DeleteDC(hdc_src);
++    }
++  }
++
++  return ret;
++}
++
++const TCHAR DesktopNotificationController::class_name_[] =
++    TEXT("DesktopNotificationController");
++
++HINSTANCE DesktopNotificationController::RegisterWndClasses() {
++  // We keep a static `module` variable which serves a dual purpose:
++  // 1. Stores the HINSTANCE where the window classes are registered,
++  //    which can be passed to `CreateWindow`
++  // 2. Indicates whether we already attempted the registration so that
++  //    we don't do it twice (we don't retry even if registration fails,
++  //    as there is no point).
++  static HMODULE module = NULL;
++
++  if (!module) {
++    if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
++                              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++                          reinterpret_cast<LPCWSTR>(&RegisterWndClasses),
++                          &module)) {
++      Toast::Register(module);
++
++      WNDCLASSEX wc = {sizeof(wc)};
++      wc.lpfnWndProc = &WndProc;
++      wc.lpszClassName = class_name_;
++      wc.cbWndExtra = sizeof(DesktopNotificationController*);
++      wc.hInstance = module;
++
++      RegisterClassEx(&wc);
++    }
++  }
++
++  return module;
++}
++
++DesktopNotificationController::DesktopNotificationController(
++    unsigned maximum_toasts) {
++  instances_.reserve(maximum_toasts);
++}
++
++DesktopNotificationController::~DesktopNotificationController() {
++  for (auto&& inst : instances_)
++    DestroyToast(&inst);
++  if (hwnd_controller_)
++    DestroyWindow(hwnd_controller_);
++  ClearAssets();
++}
++
++LRESULT CALLBACK DesktopNotificationController::WndProc(HWND hwnd,
++                                                        UINT message,
++                                                        WPARAM wparam,
++                                                        LPARAM lparam) {
++  switch (message) {
++    case WM_CREATE: {
++      auto*& cs = reinterpret_cast<const CREATESTRUCT*&>(lparam);
++      SetWindowLongPtr(hwnd, 0, (LONG_PTR)cs->lpCreateParams);
++    } break;
++
++    case WM_TIMER:
++      if (wparam == TimerID_Animate) {
++        Get(hwnd)->AnimateAll();
++      }
++      return 0;
++
++    case WM_DISPLAYCHANGE: {
++      auto* inst = Get(hwnd);
++      inst->ClearAssets();
++      inst->AnimateAll();
++    } break;
++
++    case WM_SETTINGCHANGE:
++      if (wparam == SPI_SETWORKAREA) {
++        Get(hwnd)->AnimateAll();
++      }
++      break;
++  }
++
++  return DefWindowProc(hwnd, message, wparam, lparam);
++}
++
++void DesktopNotificationController::StartAnimation() {
++  DCHECK(hwnd_controller_);
++
++  if (!is_animating_ && hwnd_controller_) {
++    // NOTE: 15ms is shorter than what we'd need for 60 fps, but since
++    //       the timer is not accurate we must request a higher frame rate
++    //       to get at least 60
++
++    SetTimer(hwnd_controller_, TimerID_Animate, 15, nullptr);
++    is_animating_ = true;
++  }
++}
++
++HFONT DesktopNotificationController::GetCaptionFont() {
++  InitializeFonts();
++  return caption_font_;
++}
++
++HFONT DesktopNotificationController::GetBodyFont() {
++  InitializeFonts();
++  return body_font_;
++}
++
++void DesktopNotificationController::InitializeFonts() {
++  if (!body_font_) {
++    NONCLIENTMETRICS metrics = {sizeof(metrics)};
++    if (SystemParametersInfo(SPI_GETNONCLIENTMETRICS, 0, &metrics, 0)) {
++      auto base_height = metrics.lfMessageFont.lfHeight;
++
++      HDC hdc = GetDC(NULL);
++      auto base_dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
++      ReleaseDC(NULL, hdc);
++
++      ScreenMetrics scr;
++
++      metrics.lfMessageFont.lfHeight =
++          (LONG)ScaleForDpi(base_height * 1.1f, scr.dpi_y, base_dpi_y);
++      body_font_ = CreateFontIndirect(&metrics.lfMessageFont);
++
++      if (caption_font_)
++        DeleteFont(caption_font_);
++      metrics.lfMessageFont.lfHeight =
++          (LONG)ScaleForDpi(base_height * 1.4f, scr.dpi_y, base_dpi_y);
++      caption_font_ = CreateFontIndirect(&metrics.lfMessageFont);
++    }
++  }
++}
++
++void DesktopNotificationController::ClearAssets() {
++  if (caption_font_) {
++    DeleteFont(caption_font_);
++    caption_font_ = NULL;
++  }
++  if (body_font_) {
++    DeleteFont(body_font_);
++    body_font_ = NULL;
++  }
++}
++
++void DesktopNotificationController::AnimateAll() {
++  // NOTE: This function refreshes position and size of all toasts according
++  // to all current conditions. Animation time is only one of the variables
++  // influencing them. Screen resolution is another.
++
++  bool keep_animating = false;
++
++  if (!instances_.empty()) {
++    RECT work_area;
++    if (SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0)) {
++      ScreenMetrics metrics;
++      POINT origin = {work_area.right,
++                      work_area.bottom - metrics.Y(toast_margin_)};
++
++      auto* hdwp = BeginDeferWindowPos(static_cast<int>(instances_.size()));
++
++      for (auto&& inst : instances_) {
++        if (!inst.hwnd)
++          continue;
++
++        auto* notification = Toast::Get(inst.hwnd);
++        hdwp = notification->Animate(hdwp, origin);
++        if (!hdwp)
++          break;
++        keep_animating |= notification->IsAnimationActive();
++      }
++
++      if (hdwp)
++        EndDeferWindowPos(hdwp);
++    }
++  }
++
++  if (!keep_animating) {
++    DCHECK(hwnd_controller_);
++    if (hwnd_controller_)
++      KillTimer(hwnd_controller_, TimerID_Animate);
++    is_animating_ = false;
++  }
++
++  // Purge dismissed notifications and collapse the stack between
++  // items which are highlighted
++  if (!instances_.empty()) {
++    auto is_alive = [](ToastInstance& inst) {
++      return inst.hwnd && IsWindowVisible(inst.hwnd);
++    };
++
++    auto is_highlighted = [](ToastInstance& inst) {
++      return inst.hwnd && Toast::Get(inst.hwnd)->IsHighlighted();
++    };
++
++    for (auto it = instances_.begin();; ++it) {
++      // find next highlighted item
++      auto it2 = find_if(it, instances_.end(), is_highlighted);
++
++      // collapse the stack in front of the highlighted item
++      it = stable_partition(it, it2, is_alive);
++
++      // purge the dead items
++      std::for_each(it, it2, [this](auto&& inst) { DestroyToast(&inst); });
++
++      if (it2 == instances_.end()) {
++        instances_.erase(it, it2);
++        break;
++      }
++
++      it = std::move(it2);
++    }
++  }
++
++  // Set new toast positions
++  if (!instances_.empty()) {
++    ScreenMetrics metrics;
++    auto margin = metrics.Y(toast_margin_);
++
++    int target_pos = 0;
++    for (auto&& inst : instances_) {
++      if (inst.hwnd) {
++        auto* toast = Toast::Get(inst.hwnd);
++
++        if (toast->IsHighlighted())
++          target_pos = toast->GetVerticalPosition();
++        else
++          toast->SetVerticalPosition(target_pos);
++
++        target_pos += toast->GetHeight() + margin;
++      }
++    }
++  }
++
++  // Create new toasts from the queue
++  CheckQueue();
++}
++
++DesktopNotificationController::Notification
++DesktopNotificationController::AddNotification(std::u16string caption,
++                                               std::u16string body_text,
++                                               HBITMAP image) {
++  auto data = std::make_shared<NotificationData>();
++  data->controller = this;
++  data->caption = std::move(caption);
++  data->body_text = std::move(body_text);
++  data->image = CopyBitmap(image);
++
++  // Enqueue new notification
++  Notification ret{*queue_.insert(queue_.end(), std::move(data))};
++  CheckQueue();
++  return ret;
++}
++
++void DesktopNotificationController::CloseNotification(
++    const Notification& notification) {
++  // Remove it from the queue
++  auto it = find(queue_.begin(), queue_.end(), notification.data_);
++  if (it != queue_.end()) {
++    (*it)->controller = nullptr;
++    queue_.erase(it);
++    this->OnNotificationClosed(notification);
++    return;
++  }
++
++  // Dismiss active toast
++  auto* hwnd = GetToast(notification.data_.get());
++  if (hwnd) {
++    auto* toast = Toast::Get(hwnd);
++    toast->Dismiss();
++  }
++}
++
++void DesktopNotificationController::CheckQueue() {
++  while (instances_.size() < instances_.capacity() && !queue_.empty()) {
++    CreateToast(std::move(queue_.front()));
++    queue_.pop_front();
++  }
++}
++
++void DesktopNotificationController::CreateToast(
++    std::shared_ptr<NotificationData>&& data) {
++  auto* hinstance = RegisterWndClasses();
++  auto* hwnd = Toast::Create(hinstance, data);
++  if (hwnd) {
++    int toast_pos = 0;
++    if (!instances_.empty()) {
++      auto& item = instances_.back();
++      DCHECK(item.hwnd);
++
++      ScreenMetrics scr;
++      auto* toast = Toast::Get(item.hwnd);
++      toast_pos = toast->GetVerticalPosition() + toast->GetHeight() +
++                  scr.Y(toast_margin_);
++    }
++
++    instances_.push_back({hwnd, std::move(data)});
++
++    if (!hwnd_controller_) {
++      // NOTE: We cannot use a message-only window because we need to
++      //       receive system notifications
++      hwnd_controller_ = CreateWindow(class_name_, nullptr, 0, 0, 0, 0, 0, NULL,
++                                      NULL, hinstance, this);
++    }
++
++    auto* toast = Toast::Get(hwnd);
++    toast->PopUp(toast_pos);
++  }
++}
++
++HWND DesktopNotificationController::GetToast(
++    const NotificationData* data) const {
++  auto it =
++      find_if(instances_.cbegin(), instances_.cend(), [data](auto&& inst) {
++        if (!inst.hwnd)
++          return false;
++        auto toast = Toast::Get(inst.hwnd);
++        return data == toast->GetNotification().get();
++      });
++
++  return (it != instances_.cend()) ? it->hwnd : NULL;
++}
++
++void DesktopNotificationController::DestroyToast(ToastInstance* inst) {
++  if (inst->hwnd) {
++    auto data = Toast::Get(inst->hwnd)->GetNotification();
++
++    DestroyWindow(inst->hwnd);
++    inst->hwnd = NULL;
++
++    Notification notification(data);
++    OnNotificationClosed(notification);
++  }
++}
++
++DesktopNotificationController::Notification::Notification() = default;
++DesktopNotificationController::Notification::Notification(
++    const DesktopNotificationController::Notification&) = default;
++
++DesktopNotificationController::Notification::Notification(
++    const std::shared_ptr<NotificationData>& data)
++    : data_(data) {
++  DCHECK(data != nullptr);
++}
++
++DesktopNotificationController::Notification::~Notification() = default;
++
++bool DesktopNotificationController::Notification::operator==(
++    const Notification& other) const {
++  return data_ == other.data_;
++}
++
++void DesktopNotificationController::Notification::Close() {
++  // No business calling this when not pointing to a valid instance
++  DCHECK(data_);
++
++  if (data_->controller)
++    data_->controller->CloseNotification(*this);
++}
++
++void DesktopNotificationController::Notification::Set(std::u16string caption,
++                                                      std::u16string body_text,
++                                                      HBITMAP image) {
++  // No business calling this when not pointing to a valid instance
++  DCHECK(data_);
++
++  // Do nothing when the notification has been closed
++  if (!data_->controller)
++    return;
++
++  if (data_->image)
++    DeleteBitmap(data_->image);
++
++  data_->caption = std::move(caption);
++  data_->body_text = std::move(body_text);
++  data_->image = CopyBitmap(image);
++
++  auto* hwnd = data_->controller->GetToast(data_.get());
++  if (hwnd) {
++    auto* toast = Toast::Get(hwnd);
++    toast->ResetContents();
++  }
++
++  // Change of contents can affect size and position of all toasts
++  data_->controller->StartAnimation();
++}
++
++DesktopNotificationController::ToastInstance::ToastInstance(
++    HWND hwnd,
++    std::shared_ptr<NotificationData> data) {
++  this->hwnd = hwnd;
++  this->data = std::move(data);
++}
++DesktopNotificationController::ToastInstance::~ToastInstance() = default;
++DesktopNotificationController::ToastInstance::ToastInstance(ToastInstance&&) =
++    default;
++
++}  // namespace electron
+diff --git a/shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.h b/shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.h
+new file mode 100644
+index 0000000000..d188cbc151
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.h
+@@ -0,0 +1,100 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_DESKTOP_NOTIFICATION_CONTROLLER_H_
++#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_DESKTOP_NOTIFICATION_CONTROLLER_H_
++
++#include <Windows.h>
++#include <deque>
++#include <memory>
++#include <string>
++#include <vector>
++
++namespace electron {
++
++struct NotificationData;
++
++class DesktopNotificationController {
++ public:
++  explicit DesktopNotificationController(unsigned maximum_toasts = 3);
++  ~DesktopNotificationController();
++
++  class Notification;
++  Notification AddNotification(std::u16string caption,
++                               std::u16string body_text,
++                               HBITMAP image);
++  void CloseNotification(const Notification& notification);
++
++  // Event handlers -- override to receive the events
++ private:
++  class Toast;
++  DesktopNotificationController(const DesktopNotificationController&) = delete;
++
++  struct ToastInstance {
++    ToastInstance(HWND, std::shared_ptr<NotificationData>);
++    ~ToastInstance();
++    ToastInstance(ToastInstance&&);
++    ToastInstance(const ToastInstance&) = delete;
++    ToastInstance& operator=(ToastInstance&&) = default;
++
++    HWND hwnd;
++    std::shared_ptr<NotificationData> data;
++  };
++
++  virtual void OnNotificationClosed(const Notification& notification) {}
++  virtual void OnNotificationClicked(const Notification& notification) {}
++  virtual void OnNotificationDismissed(const Notification& notification) {}
++
++  static HINSTANCE RegisterWndClasses();
++  void StartAnimation();
++  HFONT GetCaptionFont();
++  HFONT GetBodyFont();
++  void InitializeFonts();
++  void ClearAssets();
++  void AnimateAll();
++  void CheckQueue();
++  void CreateToast(std::shared_ptr<NotificationData>&& data);
++  HWND GetToast(const NotificationData* data) const;
++  void DestroyToast(ToastInstance* inst);
++
++  static LRESULT CALLBACK WndProc(HWND hwnd,
++                                  UINT message,
++                                  WPARAM wparam,
++                                  LPARAM lparam);
++  static DesktopNotificationController* Get(HWND hwnd) {
++    return reinterpret_cast<DesktopNotificationController*>(
++        GetWindowLongPtr(hwnd, 0));
++  }
++
++  static constexpr int toast_margin_ = 20;
++  static const TCHAR class_name_[];
++  enum TimerID { TimerID_Animate = 1 };
++  HWND hwnd_controller_ = NULL;
++  HFONT caption_font_ = NULL, body_font_ = NULL;
++  std::vector<ToastInstance> instances_;
++  std::deque<std::shared_ptr<NotificationData>> queue_;
++  bool is_animating_ = false;
++};
++
++class DesktopNotificationController::Notification {
++ public:
++  Notification();
++  explicit Notification(const std::shared_ptr<NotificationData>& data);
++  Notification(const Notification&);
++  ~Notification();
++
++  bool operator==(const Notification& other) const;
++
++  void Close();
++  void Set(std::u16string caption, std::u16string body_text, HBITMAP image);
++
++ private:
++  std::shared_ptr<NotificationData> data_;
++
++  friend class DesktopNotificationController;
++};
++
++}  // namespace electron
++
++#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_DESKTOP_NOTIFICATION_CONTROLLER_H_
+diff --git a/shell/browser/notifications/win/win32_desktop_notifications/toast.cc b/shell/browser/notifications/win/win32_desktop_notifications/toast.cc
+new file mode 100644
+index 0000000000..753baa61c8
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_desktop_notifications/toast.cc
+@@ -0,0 +1,867 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include "shell/browser/notifications/win/win32_desktop_notifications/toast.h"
++
++#include <combaseapi.h>
++
++#include <UIAutomation.h>
++#include <uxtheme.h>
++#include <windowsx.h>
++#include <algorithm>
++#include <cmath>
++#include <memory>
++
++#include "base/logging.h"
++#include "base/strings/string_util_win.h"
++#include "shell/browser/notifications/win/win32_desktop_notifications/common.h"
++#include "shell/browser/notifications/win/win32_desktop_notifications/toast_uia.h"
++
++#pragma comment(lib, "msimg32.lib")
++#pragma comment(lib, "uxtheme.lib")
++
++using std::min;
++using std::shared_ptr;
++
++namespace electron {
++
++static COLORREF GetAccentColor() {
++  bool success = false;
++  if (IsAppThemed()) {
++    HKEY hkey;
++    if (RegOpenKeyEx(HKEY_CURRENT_USER,
++                     TEXT("SOFTWARE\\Microsoft\\Windows\\DWM"), 0,
++                     KEY_QUERY_VALUE, &hkey) == ERROR_SUCCESS) {
++      COLORREF color;
++      DWORD type, size;
++      if (RegQueryValueEx(hkey, TEXT("AccentColor"), nullptr, &type,
++                          reinterpret_cast<BYTE*>(&color),
++                          &(size = sizeof(color))) == ERROR_SUCCESS &&
++          type == REG_DWORD) {
++        // convert from RGBA
++        color = RGB(GetRValue(color), GetGValue(color), GetBValue(color));
++        success = true;
++      } else if (RegQueryValueEx(hkey, TEXT("ColorizationColor"), nullptr,
++                                 &type, reinterpret_cast<BYTE*>(&color),
++                                 &(size = sizeof(color))) == ERROR_SUCCESS &&
++                 type == REG_DWORD) {
++        // convert from BGRA
++        color = RGB(GetBValue(color), GetGValue(color), GetRValue(color));
++        success = true;
++      }
++
++      RegCloseKey(hkey);
++
++      if (success)
++        return color;
++    }
++  }
++
++  return GetSysColor(COLOR_ACTIVECAPTION);
++}
++
++// Stretches a bitmap to the specified size, preserves alpha channel
++static HBITMAP StretchBitmap(HBITMAP bitmap, unsigned width, unsigned height) {
++  // We use StretchBlt for the scaling, but that discards the alpha channel.
++  // So we first create a separate grayscale bitmap from the alpha channel,
++  // scale that separately, and copy it back to the scaled color bitmap.
++
++  BITMAP bm;
++  if (!GetObject(bitmap, sizeof(bm), &bm))
++    return NULL;
++
++  if (width == 0 || height == 0)
++    return NULL;
++
++  HBITMAP result_bitmap = NULL;
++
++  HDC hdc_screen = GetDC(NULL);
++
++  HBITMAP alpha_src_bitmap;
++  {
++    BITMAPINFOHEADER bmi = {sizeof(BITMAPINFOHEADER)};
++    bmi.biWidth = bm.bmWidth;
++    bmi.biHeight = bm.bmHeight;
++    bmi.biPlanes = bm.bmPlanes;
++    bmi.biBitCount = bm.bmBitsPixel;
++    bmi.biCompression = BI_RGB;
++
++    void* alpha_src_bits;
++    alpha_src_bitmap =
++        CreateDIBSection(NULL, reinterpret_cast<BITMAPINFO*>(&bmi),
++                         DIB_RGB_COLORS, &alpha_src_bits, NULL, 0);
++
++    if (alpha_src_bitmap) {
++      if (GetDIBits(hdc_screen, bitmap, 0, 0, 0,
++                    reinterpret_cast<BITMAPINFO*>(&bmi), DIB_RGB_COLORS) &&
++          bmi.biSizeImage > 0 && (bmi.biSizeImage % 4) == 0) {
++        auto* buf = reinterpret_cast<BYTE*>(
++            _aligned_malloc(bmi.biSizeImage, sizeof(DWORD)));
++
++        if (buf) {
++          GetDIBits(hdc_screen, bitmap, 0, bm.bmHeight, buf,
++                    reinterpret_cast<BITMAPINFO*>(&bmi), DIB_RGB_COLORS);
++
++          const DWORD* src = reinterpret_cast<DWORD*>(buf);
++          const DWORD* end = reinterpret_cast<DWORD*>(buf + bmi.biSizeImage);
++
++          BYTE* dest = reinterpret_cast<BYTE*>(alpha_src_bits);
++
++          for (; src != end; ++src, ++dest) {
++            BYTE a = *src >> 24;
++            *dest++ = a;
++            *dest++ = a;
++            *dest++ = a;
++          }
++
++          _aligned_free(buf);
++        }
++      }
++    }
++  }
++
++  if (alpha_src_bitmap) {
++    BITMAPINFOHEADER bmi = {sizeof(BITMAPINFOHEADER)};
++    bmi.biWidth = width;
++    bmi.biHeight = height;
++    bmi.biPlanes = 1;
++    bmi.biBitCount = 32;
++    bmi.biCompression = BI_RGB;
++
++    void* color_bits;
++    auto* color_bitmap =
++        CreateDIBSection(NULL, reinterpret_cast<BITMAPINFO*>(&bmi),
++                         DIB_RGB_COLORS, &color_bits, NULL, 0);
++
++    void* alpha_bits;
++    auto* alpha_bitmap =
++        CreateDIBSection(NULL, reinterpret_cast<BITMAPINFO*>(&bmi),
++                         DIB_RGB_COLORS, &alpha_bits, NULL, 0);
++
++    HDC hdc = CreateCompatibleDC(NULL);
++    HDC hdc_src = CreateCompatibleDC(NULL);
++
++    if (color_bitmap && alpha_bitmap && hdc && hdc_src) {
++      SetStretchBltMode(hdc, HALFTONE);
++
++      // resize color channels
++      SelectObject(hdc, color_bitmap);
++      SelectObject(hdc_src, bitmap);
++      StretchBlt(hdc, 0, 0, width, height, hdc_src, 0, 0, bm.bmWidth,
++                 bm.bmHeight, SRCCOPY);
++
++      // resize alpha channel
++      SelectObject(hdc, alpha_bitmap);
++      SelectObject(hdc_src, alpha_src_bitmap);
++      StretchBlt(hdc, 0, 0, width, height, hdc_src, 0, 0, bm.bmWidth,
++                 bm.bmHeight, SRCCOPY);
++
++      // flush before touching the bits
++      GdiFlush();
++
++      // apply the alpha channel
++      auto* dest = reinterpret_cast<BYTE*>(color_bits);
++      auto* src = reinterpret_cast<const BYTE*>(alpha_bits);
++      auto* end = src + (width * height * 4);
++      while (src != end) {
++        dest[3] = src[0];
++        dest += 4;
++        src += 4;
++      }
++
++      // create the resulting bitmap
++      result_bitmap =
++          CreateDIBitmap(hdc_screen, &bmi, CBM_INIT, color_bits,
++                         reinterpret_cast<BITMAPINFO*>(&bmi), DIB_RGB_COLORS);
++    }
++
++    if (hdc_src)
++      DeleteDC(hdc_src);
++    if (hdc)
++      DeleteDC(hdc);
++
++    if (alpha_bitmap)
++      DeleteObject(alpha_bitmap);
++    if (color_bitmap)
++      DeleteObject(color_bitmap);
++
++    DeleteObject(alpha_src_bitmap);
++  }
++
++  ReleaseDC(NULL, hdc_screen);
++
++  return result_bitmap;
++}
++
++const TCHAR DesktopNotificationController::Toast::class_name_[] =
++    TEXT("DesktopNotificationToast");
++
++DesktopNotificationController::Toast::Toast(HWND hwnd,
++                                            shared_ptr<NotificationData>* data)
++    : hwnd_(hwnd), data_(*data) {
++  HDC hdc_screen = GetDC(NULL);
++  hdc_ = CreateCompatibleDC(hdc_screen);
++  ReleaseDC(NULL, hdc_screen);
++}
++
++DesktopNotificationController::Toast::~Toast() {
++  if (uia_) {
++    auto* UiaDisconnectProvider =
++        reinterpret_cast<decltype(&::UiaDisconnectProvider)>(GetProcAddress(
++            GetModuleHandle(L"uiautomationcore.dll"), "UiaDisconnectProvider"));
++    // first detach from the toast, then call UiaDisconnectProvider;
++    // UiaDisconnectProvider may call WM_GETOBJECT and we don't want
++    // it to return the object that we're disconnecting
++    uia_->DetachToast();
++
++    if (UiaDisconnectProvider)
++      UiaDisconnectProvider(uia_);
++
++    uia_->Release();
++    uia_ = nullptr;
++  }
++
++  DeleteDC(hdc_);
++  if (bitmap_)
++    DeleteBitmap(bitmap_);
++  if (scaled_image_)
++    DeleteBitmap(scaled_image_);
++}
++
++void DesktopNotificationController::Toast::Register(HINSTANCE hinstance) {
++  WNDCLASSEX wc = {sizeof(wc)};
++  wc.lpfnWndProc = &Toast::WndProc;
++  wc.lpszClassName = class_name_;
++  wc.cbWndExtra = sizeof(Toast*);
++  wc.hInstance = hinstance;
++  wc.hCursor = LoadCursor(NULL, IDC_ARROW);
++
++  RegisterClassEx(&wc);
++}
++
++LRESULT DesktopNotificationController::Toast::WndProc(HWND hwnd,
++                                                      UINT message,
++                                                      WPARAM wparam,
++                                                      LPARAM lparam) {
++  switch (message) {
++    case WM_CREATE: {
++      auto*& cs = reinterpret_cast<const CREATESTRUCT*&>(lparam);
++      auto* data =
++          static_cast<shared_ptr<NotificationData>*>(cs->lpCreateParams);
++      auto* inst = new Toast(hwnd, data);
++      SetWindowLongPtr(hwnd, 0, (LONG_PTR)inst);
++    } break;
++
++    case WM_NCDESTROY:
++      delete Get(hwnd);
++      SetWindowLongPtr(hwnd, 0, 0);
++      return 0;
++
++    case WM_DESTROY:
++      if (Get(hwnd)->uia_) {
++        // free UI Automation resources associated with this window
++        UiaReturnRawElementProvider(hwnd, 0, 0, nullptr);
++      }
++      break;
++
++    case WM_MOUSEACTIVATE:
++      return MA_NOACTIVATE;
++
++    case WM_TIMER: {
++      if (wparam == TimerID_AutoDismiss) {
++        auto* inst = Get(hwnd);
++
++        Notification notification(inst->data_);
++        inst->data_->controller->OnNotificationDismissed(notification);
++
++        inst->AutoDismiss();
++      }
++    }
++      return 0;
++
++    case WM_LBUTTONDOWN: {
++      auto* inst = Get(hwnd);
++
++      inst->Dismiss();
++
++      Notification notification(inst->data_);
++      if (inst->is_close_hot_)
++        inst->data_->controller->OnNotificationDismissed(notification);
++      else
++        inst->data_->controller->OnNotificationClicked(notification);
++    }
++      return 0;
++
++    case WM_MOUSEMOVE: {
++      auto* inst = Get(hwnd);
++      if (!inst->is_highlighted_) {
++        inst->is_highlighted_ = true;
++
++        TRACKMOUSEEVENT tme = {sizeof(tme), TME_LEAVE, hwnd};
++        TrackMouseEvent(&tme);
++      }
++
++      POINT cursor = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
++      inst->is_close_hot_ =
++          (PtInRect(&inst->close_button_rect_, cursor) != FALSE);
++
++      if (!inst->is_non_interactive_)
++        inst->CancelDismiss();
++
++      inst->UpdateContents();
++    }
++      return 0;
++
++    case WM_MOUSELEAVE: {
++      auto* inst = Get(hwnd);
++      inst->is_highlighted_ = false;
++      inst->is_close_hot_ = false;
++      inst->UpdateContents();
++
++      if (!inst->ease_out_active_ && inst->ease_in_pos_ == 1.0f)
++        inst->ScheduleDismissal();
++
++      // Make sure stack collapse happens if needed
++      inst->data_->controller->StartAnimation();
++    }
++      return 0;
++
++    case WM_WINDOWPOSCHANGED: {
++      auto*& wp = reinterpret_cast<WINDOWPOS*&>(lparam);
++      if (wp->flags & SWP_HIDEWINDOW) {
++        if (!IsWindowVisible(hwnd))
++          Get(hwnd)->is_highlighted_ = false;
++      }
++    } break;
++
++    case WM_GETOBJECT:
++      if (lparam == UiaRootObjectId) {
++        auto* inst = Get(hwnd);
++        if (!inst->uia_) {
++          inst->uia_ = new UIAutomationInterface(inst);
++          inst->uia_->AddRef();
++        }
++        // don't return the interface if it's being disconnected
++        if (!inst->uia_->IsDetached()) {
++          return UiaReturnRawElementProvider(hwnd, wparam, lparam, inst->uia_);
++        }
++      }
++      break;
++  }
++
++  return DefWindowProc(hwnd, message, wparam, lparam);
++}
++
++HWND DesktopNotificationController::Toast::Create(
++    HINSTANCE hinstance,
++    shared_ptr<NotificationData> data) {
++  return CreateWindowEx(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
++                        class_name_, nullptr, WS_POPUP, 0, 0, 0, 0, NULL, NULL,
++                        hinstance, &data);
++}
++
++void DesktopNotificationController::Toast::Draw() {
++  const COLORREF accent = GetAccentColor();
++
++  COLORREF back_color;
++  {
++    // base background color is 2/3 of accent
++    // highlighted adds a bit of intensity to every channel
++
++    int h = is_highlighted_ ? (0xff / 20) : 0;
++
++    back_color = RGB(min(0xff, (GetRValue(accent) * 2 / 3) + h),
++                     min(0xff, (GetGValue(accent) * 2 / 3) + h),
++                     min(0xff, (GetBValue(accent) * 2 / 3) + h));
++  }
++
++  const float back_luma = (GetRValue(back_color) * 0.299f / 255) +
++                          (GetGValue(back_color) * 0.587f / 255) +
++                          (GetBValue(back_color) * 0.114f / 255);
++
++  const struct {
++    float r, g, b;
++  } back_f = {
++      GetRValue(back_color) / 255.0f,
++      GetGValue(back_color) / 255.0f,
++      GetBValue(back_color) / 255.0f,
++  };
++
++  COLORREF fore_color, dimmed_color;
++  {
++    // based on the lightness of background, we draw foreground in light
++    // or dark shades of gray blended onto the background with slight
++    // transparency to avoid sharp contrast
++
++    constexpr float alpha = 0.9f;
++    constexpr float intensity_light[] = {(1.0f * alpha), (0.8f * alpha)};
++    constexpr float intensity_dark[] = {(0.1f * alpha), (0.3f * alpha)};
++
++    // select foreground intensity values (light or dark)
++    auto& i = (back_luma < 0.6f) ? intensity_light : intensity_dark;
++
++    float r, g, b;
++
++    r = i[0] + back_f.r * (1 - alpha);
++    g = i[0] + back_f.g * (1 - alpha);
++    b = i[0] + back_f.b * (1 - alpha);
++    fore_color = RGB(r * 0xff, g * 0xff, b * 0xff);
++
++    r = i[1] + back_f.r * (1 - alpha);
++    g = i[1] + back_f.g * (1 - alpha);
++    b = i[1] + back_f.b * (1 - alpha);
++    dimmed_color = RGB(r * 0xff, g * 0xff, b * 0xff);
++  }
++
++  // Draw background
++  {
++    auto* brush = CreateSolidBrush(back_color);
++
++    RECT rc = {0, 0, toast_size_.cx, toast_size_.cy};
++    FillRect(hdc_, &rc, brush);
++
++    DeleteBrush(brush);
++  }
++
++  SetBkMode(hdc_, TRANSPARENT);
++
++  const auto close = L'\x2715';
++  auto* caption_font = data_->controller->GetCaptionFont();
++  auto* body_font = data_->controller->GetBodyFont();
++
++  TEXTMETRIC tm_cap;
++  SelectFont(hdc_, caption_font);
++  GetTextMetrics(hdc_, &tm_cap);
++
++  auto text_offset_x = margin_.cx;
++
++  BITMAP image_info = {};
++  if (scaled_image_) {
++    GetObject(scaled_image_, sizeof(image_info), &image_info);
++
++    text_offset_x += margin_.cx + image_info.bmWidth;
++  }
++
++  // calculate close button rect
++  POINT close_pos;
++  {
++    SIZE extent = {};
++    GetTextExtentPoint32W(hdc_, &close, 1, &extent);
++
++    close_button_rect_.right = toast_size_.cx;
++    close_button_rect_.top = 0;
++
++    close_pos.x = close_button_rect_.right - margin_.cy - extent.cx;
++    close_pos.y = close_button_rect_.top + margin_.cy;
++
++    close_button_rect_.left = close_pos.x - margin_.cy;
++    close_button_rect_.bottom = close_pos.y + extent.cy + margin_.cy;
++  }
++
++  // image
++  if (scaled_image_) {
++    HDC hdc_image = CreateCompatibleDC(NULL);
++    SelectBitmap(hdc_image, scaled_image_);
++    BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
++    AlphaBlend(hdc_, margin_.cx, margin_.cy, image_info.bmWidth,
++               image_info.bmHeight, hdc_image, 0, 0, image_info.bmWidth,
++               image_info.bmHeight, blend);
++    DeleteDC(hdc_image);
++  }
++
++  // caption
++  {
++    RECT rc = {text_offset_x, margin_.cy, close_button_rect_.left,
++               toast_size_.cy};
++
++    SelectFont(hdc_, caption_font);
++    SetTextColor(hdc_, fore_color);
++    DrawText(hdc_, base::as_wcstr(data_->caption),
++             (UINT)data_->caption.length(), &rc,
++             DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
++  }
++
++  // body text
++  if (!data_->body_text.empty()) {
++    RECT rc = {text_offset_x, 2 * margin_.cy + tm_cap.tmAscent,
++               toast_size_.cx - margin_.cx, toast_size_.cy - margin_.cy};
++
++    SelectFont(hdc_, body_font);
++    SetTextColor(hdc_, dimmed_color);
++    DrawText(hdc_, base::as_wcstr(data_->body_text),
++             (UINT)data_->body_text.length(), &rc,
++             DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS |
++                 DT_EDITCONTROL);
++  }
++
++  // close button
++  {
++    SelectFont(hdc_, caption_font);
++    SetTextColor(hdc_, is_close_hot_ ? fore_color : dimmed_color);
++    ExtTextOut(hdc_, close_pos.x, close_pos.y, 0, nullptr, &close, 1, nullptr);
++  }
++
++  is_content_updated_ = true;
++}
++
++void DesktopNotificationController::Toast::Invalidate() {
++  is_content_updated_ = false;
++}
++
++bool DesktopNotificationController::Toast::IsRedrawNeeded() const {
++  return !is_content_updated_;
++}
++
++void DesktopNotificationController::Toast::UpdateBufferSize() {
++  if (hdc_) {
++    SIZE new_size;
++    {
++      TEXTMETRIC tm_cap = {};
++      HFONT font = data_->controller->GetCaptionFont();
++      if (font) {
++        SelectFont(hdc_, font);
++        if (!GetTextMetrics(hdc_, &tm_cap))
++          return;
++      }
++
++      TEXTMETRIC tm_body = {};
++      font = data_->controller->GetBodyFont();
++      if (font) {
++        SelectFont(hdc_, font);
++        if (!GetTextMetrics(hdc_, &tm_body))
++          return;
++      }
++
++      this->margin_ = {tm_cap.tmAveCharWidth * 2, tm_cap.tmAscent / 2};
++
++      new_size.cx = margin_.cx + (32 * tm_cap.tmAveCharWidth) + margin_.cx;
++      new_size.cy = margin_.cy + (tm_cap.tmHeight) + margin_.cy;
++
++      if (!data_->body_text.empty())
++        new_size.cy += margin_.cy + (3 * tm_body.tmHeight);
++
++      if (data_->image) {
++        BITMAP bm;
++        if (GetObject(data_->image, sizeof(bm), &bm)) {
++          // cap the image size
++          const int max_dim_size = 80;
++
++          auto width = bm.bmWidth;
++          auto height = bm.bmHeight;
++          if (width < height) {
++            if (height > max_dim_size) {
++              width = width * max_dim_size / height;
++              height = max_dim_size;
++            }
++          } else {
++            if (width > max_dim_size) {
++              height = height * max_dim_size / width;
++              width = max_dim_size;
++            }
++          }
++
++          ScreenMetrics scr;
++          SIZE image_draw_size = {scr.X(width), scr.Y(height)};
++
++          new_size.cx += image_draw_size.cx + margin_.cx;
++
++          auto height_with_image =
++              margin_.cy + (image_draw_size.cy) + margin_.cy;
++
++          if (new_size.cy < height_with_image)
++            new_size.cy = height_with_image;
++
++          UpdateScaledImage(image_draw_size);
++        }
++      }
++    }
++
++    if (new_size.cx != this->toast_size_.cx ||
++        new_size.cy != this->toast_size_.cy) {
++      HDC hdc_screen = GetDC(NULL);
++      auto* new_bitmap =
++          CreateCompatibleBitmap(hdc_screen, new_size.cx, new_size.cy);
++      ReleaseDC(NULL, hdc_screen);
++
++      if (new_bitmap) {
++        if (SelectBitmap(hdc_, new_bitmap)) {
++          RECT dirty1 = {}, dirty2 = {};
++          if (toast_size_.cx < new_size.cx) {
++            dirty1 = {toast_size_.cx, 0, new_size.cx, toast_size_.cy};
++          }
++          if (toast_size_.cy < new_size.cy) {
++            dirty2 = {0, toast_size_.cy, new_size.cx, new_size.cy};
++          }
++
++          if (this->bitmap_)
++            DeleteBitmap(this->bitmap_);
++          this->bitmap_ = new_bitmap;
++          this->toast_size_ = new_size;
++
++          Invalidate();
++
++          // Resize also the DWM buffer to prevent flicker during
++          // window resizing. Make sure any existing data is not
++          // overwritten by marking the dirty region.
++          {
++            POINT origin = {0, 0};
++
++            UPDATELAYEREDWINDOWINFO ulw;
++            ulw.cbSize = sizeof(ulw);
++            ulw.hdcDst = NULL;
++            ulw.pptDst = nullptr;
++            ulw.psize = &toast_size_;
++            ulw.hdcSrc = hdc_;
++            ulw.pptSrc = &origin;
++            ulw.crKey = 0;
++            ulw.pblend = nullptr;
++            ulw.dwFlags = 0;
++            ulw.prcDirty = &dirty1;
++            auto b1 = UpdateLayeredWindowIndirect(hwnd_, &ulw);
++            ulw.prcDirty = &dirty2;
++            auto b2 = UpdateLayeredWindowIndirect(hwnd_, &ulw);
++            DCHECK(b1 && b2);
++          }
++
++          return;
++        }
++
++        DeleteBitmap(new_bitmap);
++      }
++    }
++  }
++}
++
++void DesktopNotificationController::Toast::UpdateScaledImage(const SIZE& size) {
++  BITMAP bm;
++  if (!GetObject(scaled_image_, sizeof(bm), &bm) || bm.bmWidth != size.cx ||
++      bm.bmHeight != size.cy) {
++    if (scaled_image_)
++      DeleteBitmap(scaled_image_);
++    scaled_image_ = StretchBitmap(data_->image, size.cx, size.cy);
++  }
++}
++
++void DesktopNotificationController::Toast::UpdateContents() {
++  Draw();
++
++  if (IsWindowVisible(hwnd_)) {
++    RECT rc;
++    GetWindowRect(hwnd_, &rc);
++    POINT origin = {0, 0};
++    SIZE size = {rc.right - rc.left, rc.bottom - rc.top};
++    UpdateLayeredWindow(hwnd_, NULL, nullptr, &size, hdc_, &origin, 0, nullptr,
++                        0);
++  }
++}
++
++void DesktopNotificationController::Toast::Dismiss() {
++  if (!is_non_interactive_) {
++    // Set a flag to prevent further interaction. We don't disable the HWND
++    // because we still want to receive mouse move messages in order to keep
++    // the toast under the cursor and not collapse it while dismissing.
++    is_non_interactive_ = true;
++
++    AutoDismiss();
++  }
++}
++
++void DesktopNotificationController::Toast::AutoDismiss() {
++  KillTimer(hwnd_, TimerID_AutoDismiss);
++  StartEaseOut();
++}
++
++void DesktopNotificationController::Toast::CancelDismiss() {
++  KillTimer(hwnd_, TimerID_AutoDismiss);
++  ease_out_active_ = false;
++  ease_out_pos_ = 0;
++}
++
++void DesktopNotificationController::Toast::ScheduleDismissal() {
++  ULONG duration;
++  if (!SystemParametersInfo(SPI_GETMESSAGEDURATION, 0, &duration, 0)) {
++    duration = 5;
++  }
++  SetTimer(hwnd_, TimerID_AutoDismiss, duration * 1000, nullptr);
++}
++
++void DesktopNotificationController::Toast::ResetContents() {
++  if (scaled_image_) {
++    DeleteBitmap(scaled_image_);
++    scaled_image_ = NULL;
++  }
++
++  Invalidate();
++}
++
++void DesktopNotificationController::Toast::PopUp(int y) {
++  vertical_pos_target_ = vertical_pos_ = y;
++  StartEaseIn();
++}
++
++void DesktopNotificationController::Toast::SetVerticalPosition(int y) {
++  // Don't restart animation if current target is the same
++  if (y == vertical_pos_target_)
++    return;
++
++  // Make sure the new animation's origin is at the current position
++  vertical_pos_ += static_cast<int>((vertical_pos_target_ - vertical_pos_) *
++                                    stack_collapse_pos_);
++
++  // Set new target position and start the animation
++  vertical_pos_target_ = y;
++  stack_collapse_start_ = GetTickCount();
++  data_->controller->StartAnimation();
++}
++
++HDWP DesktopNotificationController::Toast::Animate(HDWP hdwp,
++                                                   const POINT& origin) {
++  UpdateBufferSize();
++
++  if (IsRedrawNeeded())
++    Draw();
++
++  POINT src_origin = {0, 0};
++
++  UPDATELAYEREDWINDOWINFO ulw;
++  ulw.cbSize = sizeof(ulw);
++  ulw.hdcDst = NULL;
++  ulw.pptDst = nullptr;
++  ulw.psize = nullptr;
++  ulw.hdcSrc = hdc_;
++  ulw.pptSrc = &src_origin;
++  ulw.crKey = 0;
++  ulw.pblend = nullptr;
++  ulw.dwFlags = 0;
++  ulw.prcDirty = nullptr;
++
++  POINT pt = {0, 0};
++  SIZE size = {0, 0};
++  BLENDFUNCTION blend;
++  UINT dwpFlags =
++      SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOREDRAW | SWP_NOCOPYBITS;
++
++  auto ease_in_pos = AnimateEaseIn();
++  auto ease_out_pos = AnimateEaseOut();
++  auto stack_collapse_pos = AnimateStackCollapse();
++
++  auto y_offset = (vertical_pos_target_ - vertical_pos_) * stack_collapse_pos;
++
++  size.cx = static_cast<int>(toast_size_.cx * ease_in_pos);
++  size.cy = toast_size_.cy;
++
++  pt.x = origin.x - size.cx;
++  pt.y = static_cast<int>(origin.y - vertical_pos_ - y_offset - size.cy);
++
++  ulw.pptDst = &pt;
++  ulw.psize = &size;
++
++  if (ease_in_active_ && ease_in_pos == 1.0f) {
++    ease_in_active_ = false;
++    ScheduleDismissal();
++  }
++
++  this->ease_in_pos_ = ease_in_pos;
++  this->stack_collapse_pos_ = stack_collapse_pos;
++
++  if (ease_out_pos != this->ease_out_pos_) {
++    blend.BlendOp = AC_SRC_OVER;
++    blend.BlendFlags = 0;
++    blend.SourceConstantAlpha = (BYTE)(255 * (1.0f - ease_out_pos));
++    blend.AlphaFormat = 0;
++
++    ulw.pblend = &blend;
++    ulw.dwFlags = ULW_ALPHA;
++
++    this->ease_out_pos_ = ease_out_pos;
++
++    if (ease_out_pos == 1.0f) {
++      ease_out_active_ = false;
++
++      dwpFlags &= ~SWP_SHOWWINDOW;
++      dwpFlags |= SWP_HIDEWINDOW;
++    }
++  }
++
++  if (stack_collapse_pos == 1.0f) {
++    vertical_pos_ = vertical_pos_target_;
++  }
++
++  // `UpdateLayeredWindowIndirect` updates position, size, and transparency.
++  // `DeferWindowPos` updates z-order, and also position and size in case
++  // ULWI fails, which can happen when one of the dimensions is zero (e.g.
++  // at the beginning of ease-in).
++
++  UpdateLayeredWindowIndirect(hwnd_, &ulw);
++  hdwp = DeferWindowPos(hdwp, hwnd_, HWND_TOPMOST, pt.x, pt.y, size.cx, size.cy,
++                        dwpFlags);
++  return hdwp;
++}
++
++void DesktopNotificationController::Toast::StartEaseIn() {
++  DCHECK(!ease_in_active_);
++  ease_in_start_ = GetTickCount();
++  ease_in_active_ = true;
++  data_->controller->StartAnimation();
++}
++
++void DesktopNotificationController::Toast::StartEaseOut() {
++  DCHECK(!ease_out_active_);
++  ease_out_start_ = GetTickCount();
++  ease_out_active_ = true;
++  data_->controller->StartAnimation();
++}
++
++bool DesktopNotificationController::Toast::IsStackCollapseActive() const {
++  return (vertical_pos_ != vertical_pos_target_);
++}
++
++float DesktopNotificationController::Toast::AnimateEaseIn() {
++  if (!ease_in_active_)
++    return ease_in_pos_;
++
++  constexpr DWORD duration = 500;
++  auto elapsed = GetTickCount() - ease_in_start_;
++  float time = std::min(duration, elapsed) / static_cast<float>(duration);
++
++  // decelerating exponential ease
++  const float a = -8.0f;
++  auto pos = (std::exp(a * time) - 1.0f) / (std::exp(a) - 1.0f);
++
++  return pos;
++}
++
++float DesktopNotificationController::Toast::AnimateEaseOut() {
++  if (!ease_out_active_)
++    return ease_out_pos_;
++
++  constexpr DWORD duration = 120;
++  auto elapsed = GetTickCount() - ease_out_start_;
++  float time = std::min(duration, elapsed) / static_cast<float>(duration);
++
++  // accelerating circle ease
++  auto pos = 1.0f - std::sqrt(1 - time * time);
++
++  return pos;
++}
++
++float DesktopNotificationController::Toast::AnimateStackCollapse() {
++  if (!IsStackCollapseActive())
++    return stack_collapse_pos_;
++
++  constexpr DWORD duration = 500;
++  auto elapsed = GetTickCount() - stack_collapse_start_;
++  float time = std::min(duration, elapsed) / static_cast<float>(duration);
++
++  // decelerating exponential ease
++  const float a = -8.0f;
++  auto pos = (std::exp(a * time) - 1.0f) / (std::exp(a) - 1.0f);
++
++  return pos;
++}
++
++}  // namespace electron
+diff --git a/shell/browser/notifications/win/win32_desktop_notifications/toast.h b/shell/browser/notifications/win/win32_desktop_notifications/toast.h
+new file mode 100644
+index 0000000000..62126cd27e
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_desktop_notifications/toast.h
+@@ -0,0 +1,109 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_TOAST_H_
++#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_TOAST_H_
++
++#include <memory>
++
++#include "shell/browser/notifications/win/win32_desktop_notifications/desktop_notification_controller.h"
++
++#include "base/check.h"
++
++#include "base/memory/raw_ptr.h"
++
++namespace electron {
++
++class DesktopNotificationController::Toast {
++ public:
++  static void Register(HINSTANCE hinstance);
++  static HWND Create(HINSTANCE hinstance,
++                     std::shared_ptr<NotificationData> data);
++  static Toast* Get(HWND hwnd) {
++    return reinterpret_cast<Toast*>(GetWindowLongPtr(hwnd, 0));
++  }
++
++  static LRESULT CALLBACK WndProc(HWND hwnd,
++                                  UINT message,
++                                  WPARAM wparam,
++                                  LPARAM lparam);
++
++  const std::shared_ptr<NotificationData>& GetNotification() const {
++    return data_;
++  }
++
++  void ResetContents();
++
++  void Dismiss();
++
++  void PopUp(int y);
++  void SetVerticalPosition(int y);
++  int GetVerticalPosition() const { return vertical_pos_target_; }
++  int GetHeight() const { return toast_size_.cy; }
++  HDWP Animate(HDWP hdwp, const POINT& origin);
++  bool IsAnimationActive() const {
++    return ease_in_active_ || ease_out_active_ || IsStackCollapseActive();
++  }
++  bool IsHighlighted() const {
++    DCHECK(!(is_highlighted_ && !IsWindowVisible(hwnd_)));
++    return is_highlighted_;
++  }
++
++ private:
++  enum TimerID { TimerID_AutoDismiss = 1 };
++
++  Toast(HWND hwnd, std::shared_ptr<NotificationData>* data);
++  ~Toast();
++
++  void UpdateBufferSize();
++  void UpdateScaledImage(const SIZE& size);
++  void Draw();
++  void Invalidate();
++  bool IsRedrawNeeded() const;
++  void UpdateContents();
++
++  void AutoDismiss();
++  void CancelDismiss();
++  void ScheduleDismissal();
++
++  void StartEaseIn();
++  void StartEaseOut();
++  bool IsStackCollapseActive() const;
++
++  float AnimateEaseIn();
++  float AnimateEaseOut();
++  float AnimateStackCollapse();
++
++ private:
++  static const TCHAR class_name_[];
++
++  const HWND hwnd_;
++  HDC hdc_;
++  HBITMAP bitmap_ = NULL;
++
++  class UIAutomationInterface;
++  raw_ptr<UIAutomationInterface> uia_ = nullptr;
++
++  const std::shared_ptr<NotificationData> data_;  // never null
++
++  SIZE toast_size_ = {};
++  SIZE margin_ = {};
++  RECT close_button_rect_ = {};
++  HBITMAP scaled_image_ = NULL;
++
++  int vertical_pos_ = 0;
++  int vertical_pos_target_ = 0;
++  bool is_non_interactive_ = false;
++  bool ease_in_active_ = false;
++  bool ease_out_active_ = false;
++  bool is_content_updated_ = false;
++  bool is_highlighted_ = false;
++  bool is_close_hot_ = false;
++  DWORD ease_in_start_, ease_out_start_, stack_collapse_start_;
++  float ease_in_pos_ = 0, ease_out_pos_ = 0, stack_collapse_pos_ = 0;
++};
++
++}  // namespace electron
++
++#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_TOAST_H_
+diff --git a/shell/browser/notifications/win/win32_desktop_notifications/toast_uia.cc b/shell/browser/notifications/win/win32_desktop_notifications/toast_uia.cc
+new file mode 100644
+index 0000000000..472de5152b
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_desktop_notifications/toast_uia.cc
+@@ -0,0 +1,258 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#include "shell/browser/notifications/win/win32_desktop_notifications/toast_uia.h"
++
++#include <UIAutomation.h>
++
++#include "base/check_op.h"
++#include "base/strings/string_util_win.h"
++#include "shell/browser/notifications/win/win32_desktop_notifications/common.h"
++
++#pragma comment(lib, "uiautomationcore.lib")
++
++namespace electron {
++
++DesktopNotificationController::Toast::UIAutomationInterface::
++    UIAutomationInterface(Toast* toast)
++    : hwnd_(toast->hwnd_) {
++  text_ = toast->data_->caption;
++  if (!toast->data_->body_text.empty()) {
++    if (!text_.empty())
++      text_.append(u", ");
++    text_.append(toast->data_->body_text);
++  }
++}
++
++ULONG DesktopNotificationController::Toast::UIAutomationInterface::AddRef() {
++  return InterlockedIncrement(&cref_);
++}
++
++ULONG DesktopNotificationController::Toast::UIAutomationInterface::Release() {
++  LONG ret = InterlockedDecrement(&cref_);
++  if (ret == 0) {
++    delete this;
++    return 0;
++  }
++  DCHECK_GT(ret, 0);
++  return ret;
++}
++
++STDMETHODIMP
++DesktopNotificationController::Toast::UIAutomationInterface::QueryInterface(
++    REFIID riid,
++    LPVOID* ppv) {
++  if (!ppv)
++    return E_INVALIDARG;
++
++  if (riid == IID_IUnknown) {
++    *ppv =
++        static_cast<IUnknown*>(static_cast<IRawElementProviderSimple*>(this));
++  } else if (riid == __uuidof(IRawElementProviderSimple)) {
++    *ppv = static_cast<IRawElementProviderSimple*>(this);
++  } else if (riid == __uuidof(IWindowProvider)) {
++    *ppv = static_cast<IWindowProvider*>(this);
++  } else if (riid == __uuidof(IInvokeProvider)) {
++    *ppv = static_cast<IInvokeProvider*>(this);
++  } else if (riid == __uuidof(ITextProvider)) {
++    *ppv = static_cast<ITextProvider*>(this);
++  } else {
++    *ppv = nullptr;
++    return E_NOINTERFACE;
++  }
++
++  this->AddRef();
++  return S_OK;
++}
++
++HRESULT DesktopNotificationController::Toast::UIAutomationInterface::
++    get_ProviderOptions(ProviderOptions* retval) {
++  *retval = ProviderOptions_ServerSideProvider;
++  return S_OK;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::GetPatternProvider(
++    PATTERNID pattern_id,
++    IUnknown** retval) {
++  switch (pattern_id) {
++    case UIA_WindowPatternId:
++      *retval = static_cast<IWindowProvider*>(this);
++      break;
++    case UIA_InvokePatternId:
++      *retval = static_cast<IInvokeProvider*>(this);
++      break;
++    case UIA_TextPatternId:
++      *retval = static_cast<ITextProvider*>(this);
++      break;
++    default:
++      *retval = nullptr;
++      return S_OK;
++  }
++  this->AddRef();
++  return S_OK;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::GetPropertyValue(
++    PROPERTYID property_id,
++    VARIANT* retval) {
++  // Note: In order to have the toast read by the NVDA screen reader, we
++  // pretend that we're a Windows 8 native toast notification by reporting
++  // these property values:
++  //    ClassName: ToastContentHost
++  //    ControlType: UIA_ToolTipControlTypeId
++
++  retval->vt = VT_EMPTY;
++  switch (property_id) {
++    case UIA_NamePropertyId:
++      retval->vt = VT_BSTR;
++      retval->bstrVal = SysAllocString(base::as_wcstr(text_));
++      break;
++
++    case UIA_ClassNamePropertyId:
++      retval->vt = VT_BSTR;
++      retval->bstrVal = SysAllocString(L"ToastContentHost");
++      break;
++
++    case UIA_ControlTypePropertyId:
++      retval->vt = VT_I4;
++      retval->lVal = UIA_ToolTipControlTypeId;
++      break;
++
++    case UIA_LiveSettingPropertyId:
++      retval->vt = VT_I4;
++      retval->lVal = Assertive;
++      break;
++
++    case UIA_IsContentElementPropertyId:
++    case UIA_IsControlElementPropertyId:
++    case UIA_IsPeripheralPropertyId:
++      retval->vt = VT_BOOL;
++      retval->lVal = VARIANT_TRUE;
++      break;
++
++    case UIA_HasKeyboardFocusPropertyId:
++    case UIA_IsKeyboardFocusablePropertyId:
++    case UIA_IsOffscreenPropertyId:
++      retval->vt = VT_BOOL;
++      retval->lVal = VARIANT_FALSE;
++      break;
++  }
++  return S_OK;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::
++    get_HostRawElementProvider(IRawElementProviderSimple** retval) {
++  if (!hwnd_)
++    return E_FAIL;
++  return UiaHostProviderFromHwnd(hwnd_, retval);
++}
++
++HRESULT DesktopNotificationController::Toast::UIAutomationInterface::Invoke() {
++  return E_NOTIMPL;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::SetVisualState(
++    WindowVisualState state) {
++  // setting the visual state is not supported
++  return E_FAIL;
++}
++
++HRESULT DesktopNotificationController::Toast::UIAutomationInterface::Close() {
++  return E_NOTIMPL;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::WaitForInputIdle(
++    int milliseconds,
++    BOOL* retval) {
++  return E_NOTIMPL;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::get_CanMaximize(
++    BOOL* retval) {
++  *retval = FALSE;
++  return S_OK;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::get_CanMinimize(
++    BOOL* retval) {
++  *retval = FALSE;
++  return S_OK;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::get_IsModal(
++    BOOL* retval) {
++  *retval = FALSE;
++  return S_OK;
++}
++
++HRESULT DesktopNotificationController::Toast::UIAutomationInterface::
++    get_WindowVisualState(WindowVisualState* retval) {
++  *retval = WindowVisualState_Normal;
++  return S_OK;
++}
++
++HRESULT DesktopNotificationController::Toast::UIAutomationInterface::
++    get_WindowInteractionState(WindowInteractionState* retval) {
++  if (!hwnd_)
++    *retval = WindowInteractionState_Closing;
++  else
++    *retval = WindowInteractionState_ReadyForUserInteraction;
++
++  return S_OK;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::get_IsTopmost(
++    BOOL* retval) {
++  *retval = TRUE;
++  return S_OK;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::GetSelection(
++    SAFEARRAY** retval) {
++  return E_NOTIMPL;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::GetVisibleRanges(
++    SAFEARRAY** retval) {
++  return E_NOTIMPL;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::RangeFromChild(
++    IRawElementProviderSimple* child_element,
++    ITextRangeProvider** retval) {
++  return E_NOTIMPL;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::RangeFromPoint(
++    UiaPoint point,
++    ITextRangeProvider** retval) {
++  return E_NOTIMPL;
++}
++
++HRESULT
++DesktopNotificationController::Toast::UIAutomationInterface::get_DocumentRange(
++    ITextRangeProvider** retval) {
++  return E_NOTIMPL;
++}
++
++HRESULT DesktopNotificationController::Toast::UIAutomationInterface::
++    get_SupportedTextSelection(SupportedTextSelection* retval) {
++  *retval = SupportedTextSelection_None;
++  return S_OK;
++}
++
++}  // namespace electron
+diff --git a/shell/browser/notifications/win/win32_desktop_notifications/toast_uia.h b/shell/browser/notifications/win/win32_desktop_notifications/toast_uia.h
+new file mode 100644
+index 0000000000..0639357b24
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_desktop_notifications/toast_uia.h
+@@ -0,0 +1,84 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_TOAST_UIA_H_
++#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_TOAST_UIA_H_
++
++#include "shell/browser/notifications/win/win32_desktop_notifications/toast.h"
++
++#include <combaseapi.h>
++
++#include <UIAutomationCore.h>
++
++namespace electron {
++
++class DesktopNotificationController::Toast::UIAutomationInterface
++    : public IRawElementProviderSimple,
++      public IWindowProvider,
++      public IInvokeProvider,
++      public ITextProvider {
++ public:
++  explicit UIAutomationInterface(Toast* toast);
++
++  void DetachToast() { hwnd_ = NULL; }
++
++  bool IsDetached() const { return !hwnd_; }
++
++ private:
++  virtual ~UIAutomationInterface() = default;
++
++  // IUnknown
++ public:
++  ULONG STDMETHODCALLTYPE AddRef() override;
++  ULONG STDMETHODCALLTYPE Release() override;
++  STDMETHODIMP QueryInterface(REFIID riid, LPVOID* ppv) override;
++
++  // IRawElementProviderSimple
++ public:
++  STDMETHODIMP get_ProviderOptions(ProviderOptions* retval) override;
++  STDMETHODIMP GetPatternProvider(PATTERNID pattern_id,
++                                  IUnknown** retval) override;
++  STDMETHODIMP GetPropertyValue(PROPERTYID property_id,
++                                VARIANT* retval) override;
++  STDMETHODIMP get_HostRawElementProvider(
++      IRawElementProviderSimple** retval) override;
++
++  // IWindowProvider
++ public:
++  STDMETHODIMP SetVisualState(WindowVisualState state) override;
++  STDMETHODIMP Close() override;
++  STDMETHODIMP WaitForInputIdle(int milliseconds, BOOL* retval) override;
++  STDMETHODIMP get_CanMaximize(BOOL* retval) override;
++  STDMETHODIMP get_CanMinimize(BOOL* retval) override;
++  STDMETHODIMP get_IsModal(BOOL* retval) override;
++  STDMETHODIMP get_WindowVisualState(WindowVisualState* retval) override;
++  STDMETHODIMP get_WindowInteractionState(
++      WindowInteractionState* retval) override;
++  STDMETHODIMP get_IsTopmost(BOOL* retval) override;
++
++  // IInvokeProvider
++ public:
++  STDMETHODIMP Invoke() override;
++
++  // ITextProvider
++ public:
++  STDMETHODIMP GetSelection(SAFEARRAY** retval) override;
++  STDMETHODIMP GetVisibleRanges(SAFEARRAY** retval) override;
++  STDMETHODIMP RangeFromChild(IRawElementProviderSimple* child_element,
++                              ITextRangeProvider** retval) override;
++  STDMETHODIMP RangeFromPoint(UiaPoint point,
++                              ITextRangeProvider** retval) override;
++  STDMETHODIMP get_DocumentRange(ITextRangeProvider** retval) override;
++  STDMETHODIMP get_SupportedTextSelection(
++      SupportedTextSelection* retval) override;
++
++ private:
++  volatile LONG cref_ = 0;
++  HWND hwnd_;
++  std::u16string text_;
++};
++
++}  // namespace electron
++
++#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_DESKTOP_NOTIFICATIONS_TOAST_UIA_H_
+diff --git a/shell/browser/notifications/win/win32_notification.cc b/shell/browser/notifications/win/win32_notification.cc
+new file mode 100644
+index 0000000000..55d2838f76
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_notification.cc
+@@ -0,0 +1,70 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++
++#include "shell/browser/notifications/win/win32_notification.h"
++
++#include <windows.h>
++#include <utility>
++
++#include "base/strings/utf_string_conversions.h"
++#include "third_party/skia/include/core/SkBitmap.h"
++
++namespace electron {
++
++void Win32Notification::Show(const NotificationOptions& options) {
++  auto* presenter = static_cast<NotificationPresenterWin7*>(this->presenter());
++  if (!presenter)
++    return;
++
++  HBITMAP image = NULL;
++
++  if (!options.icon.drawsNothing()) {
++    if (options.icon.colorType() == kBGRA_8888_SkColorType) {
++      BITMAPINFOHEADER bmi = {sizeof(BITMAPINFOHEADER)};
++      bmi.biWidth = options.icon.width();
++      bmi.biHeight = -options.icon.height();
++      bmi.biPlanes = 1;
++      bmi.biBitCount = 32;
++      bmi.biCompression = BI_RGB;
++
++      HDC hdcScreen = GetDC(NULL);
++      image =
++          CreateDIBitmap(hdcScreen, &bmi, CBM_INIT, options.icon.getPixels(),
++                         reinterpret_cast<BITMAPINFO*>(&bmi), DIB_RGB_COLORS);
++      ReleaseDC(NULL, hdcScreen);
++    }
++  }
++
++  Win32Notification* existing = nullptr;
++  if (!options.tag.empty())
++    existing = presenter->GetNotificationObjectByTag(options.tag);
++
++  if (existing) {
++    existing->tag_.clear();
++
++    this->notification_ref_ = std::move(existing->notification_ref_);
++    this->notification_ref_.Set(options.title, options.msg, image);
++    // Need to remove the entry in the notifications set that
++    // NotificationPresenter is holding
++    existing->Destroy();
++  } else {
++    this->notification_ref_ =
++        presenter->AddNotification(options.title, options.msg, image);
++  }
++
++  this->tag_ = options.tag;
++
++  if (image)
++    DeleteObject(image);
++}
++
++void Win32Notification::Dismiss() {
++  notification_ref_.Close();
++}
++
++}  // namespace electron
+diff --git a/shell/browser/notifications/win/win32_notification.h b/shell/browser/notifications/win/win32_notification.h
+new file mode 100644
+index 0000000000..fdb1145cca
+--- /dev/null
++++ b/shell/browser/notifications/win/win32_notification.h
+@@ -0,0 +1,36 @@
++// Copyright (c) 2015 GitHub, Inc.
++// Use of this source code is governed by the MIT license that can be
++// found in the LICENSE file.
++
++#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_NOTIFICATION_H_
++#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_NOTIFICATION_H_
++
++#include <string>
++
++#include "shell/browser/notifications/notification.h"
++#include "shell/browser/notifications/win/notification_presenter_win7.h"
++
++namespace electron {
++
++class Win32Notification : public electron::Notification {
++ public:
++  Win32Notification(NotificationDelegate* delegate,
++                    NotificationPresenterWin7* presenter)
++      : Notification(delegate, presenter) {}
++  void Show(const NotificationOptions& options) override;
++  void Dismiss() override;
++
++  const DesktopNotificationController::Notification& GetRef() const {
++    return notification_ref_;
++  }
++
++  const std::string& GetTag() const { return tag_; }
++
++ private:
++  DesktopNotificationController::Notification notification_ref_;
++  std::string tag_;
++};
++
++}  // namespace electron
++
++#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_WIN_WIN32_NOTIFICATION_H_
+diff --git a/shell/browser/ui/views/win_frame_view.cc b/shell/browser/ui/views/win_frame_view.cc
+index 7525a5fd1c..d085028805 100644
+--- a/shell/browser/ui/views/win_frame_view.cc
++++ b/shell/browser/ui/views/win_frame_view.cc
+@@ -118,35 +118,37 @@ int WinFrameView::NonClientHitTest(const gfx::Point& point) {
+     // corner of the window. This code ensures the mouse isn't set to a size
+     // cursor while hovering over the caption buttons, thus giving the incorrect
+     // impression that the user can resize the window.
+-    RECT button_bounds = {0};
+-    if (SUCCEEDED(DwmGetWindowAttribute(
+-            views::HWNDForWidget(frame()), DWMWA_CAPTION_BUTTON_BOUNDS,
+-            &button_bounds, sizeof(button_bounds)))) {
+-      gfx::RectF button_bounds_in_dips = gfx::ConvertRectToDips(
+-          gfx::Rect(button_bounds), display::win::GetDPIScale());
+-      // TODO(crbug.com/1131681): GetMirroredRect() requires an integer rect,
+-      // but the size in DIPs may not be an integer with a fractional device
+-      // scale factor. If we want to keep using integers, the choice to use
+-      // ToFlooredRectDeprecated() seems to be doing the wrong thing given the
+-      // comment below about insetting 1 DIP instead of 1 physical pixel. We
+-      // should probably use ToEnclosedRect() and then we could have inset 1
+-      // physical pixel here.
+-      gfx::Rect buttons =
+-          GetMirroredRect(gfx::ToFlooredRectDeprecated(button_bounds_in_dips));
+-
+-      // There is a small one-pixel strip right above the caption buttons in
+-      // which the resize border "peeks" through.
+-      constexpr int kCaptionButtonTopInset = 1;
+-      // The sizing region at the window edge above the caption buttons is
+-      // 1 px regardless of scale factor. If we inset by 1 before converting
+-      // to DIPs, the precision loss might eliminate this region entirely. The
+-      // best we can do is to inset after conversion. This guarantees we'll
+-      // show the resize cursor when resizing is possible. The cost of which
+-      // is also maybe showing it over the portion of the DIP that isn't the
+-      // outermost pixel.
+-      buttons.Inset(gfx::Insets::TLBR(0, kCaptionButtonTopInset, 0, 0));
+-      if (buttons.Contains(point))
+-        return HTNOWHERE;
++    if (base::win::GetVersion() >= base::win::Version::WIN8) {
++      RECT button_bounds = {0};
++      if (SUCCEEDED(DwmGetWindowAttribute(
++              views::HWNDForWidget(frame()), DWMWA_CAPTION_BUTTON_BOUNDS,
++              &button_bounds, sizeof(button_bounds)))) {
++        gfx::RectF button_bounds_in_dips = gfx::ConvertRectToDips(
++            gfx::Rect(button_bounds), display::win::GetDPIScale());
++        // TODO(crbug.com/1131681): GetMirroredRect() requires an integer rect,
++        // but the size in DIPs may not be an integer with a fractional device
++        // scale factor. If we want to keep using integers, the choice to use
++        // ToFlooredRectDeprecated() seems to be doing the wrong thing given the
++        // comment below about insetting 1 DIP instead of 1 physical pixel. We
++        // should probably use ToEnclosedRect() and then we could have inset 1
++        // physical pixel here.
++        gfx::Rect buttons = GetMirroredRect(
++            gfx::ToFlooredRectDeprecated(button_bounds_in_dips));
++
++        // There is a small one-pixel strip right above the caption buttons in
++        // which the resize border "peeks" through.
++        constexpr int kCaptionButtonTopInset = 1;
++        // The sizing region at the window edge above the caption buttons is
++        // 1 px regardless of scale factor. If we inset by 1 before converting
++        // to DIPs, the precision loss might eliminate this region entirely. The
++        // best we can do is to inset after conversion. This guarantees we'll
++        // show the resize cursor when resizing is possible. The cost of which
++        // is also maybe showing it over the portion of the DIP that isn't the
++        // outermost pixel.
++        buttons.Inset(gfx::Insets::TLBR(0, kCaptionButtonTopInset, 0, 0));
++        if (buttons.Contains(point))
++          return HTNOWHERE;
++      }
+     }
+ 
+     int top_border_thickness = FrameTopBorderThickness(false);
+diff --git a/shell/browser/ui/win/electron_desktop_window_tree_host_win.cc b/shell/browser/ui/win/electron_desktop_window_tree_host_win.cc
+index e9dab479ab..09a7cd1a4b 100644
+--- a/shell/browser/ui/win/electron_desktop_window_tree_host_win.cc
++++ b/shell/browser/ui/win/electron_desktop_window_tree_host_win.cc
+@@ -46,6 +46,14 @@ bool ElectronDesktopWindowTreeHostWin::ShouldPaintAsActive() const {
+   return views::DesktopWindowTreeHostWin::ShouldPaintAsActive();
+ }
+ 
++bool ElectronDesktopWindowTreeHostWin::HasNativeFrame() const {
++  // Since we never use chromium's titlebar implementation, we can just say
++  // that we use a native titlebar. This will disable the repaint locking when
++  // DWM composition is disabled.
++  // See also https://github.com/electron/electron/issues/1821.
++  return !ui::win::IsAeroGlassEnabled();
++}
++
+ bool ElectronDesktopWindowTreeHostWin::GetDwmFrameInsetsInPixels(
+     gfx::Insets* insets) const {
+   // Set DWMFrameInsets to prevent maximized frameless window from bleeding
+diff --git a/shell/browser/ui/win/electron_desktop_window_tree_host_win.h b/shell/browser/ui/win/electron_desktop_window_tree_host_win.h
+index 2c627ceeb0..93832adb3e 100644
+--- a/shell/browser/ui/win/electron_desktop_window_tree_host_win.h
++++ b/shell/browser/ui/win/electron_desktop_window_tree_host_win.h
+@@ -33,6 +33,7 @@ class ElectronDesktopWindowTreeHostWin : public views::DesktopWindowTreeHostWin,
+                     LPARAM l_param,
+                     LRESULT* result) override;
+   bool ShouldPaintAsActive() const override;
++  bool HasNativeFrame() const override;
+   bool GetDwmFrameInsetsInPixels(gfx::Insets* insets) const override;
+   bool GetClientAreaInsets(gfx::Insets* insets,
+                            HMONITOR monitor) const override;
+diff --git a/shell/common/application_info_win.cc b/shell/common/application_info_win.cc
+index 77fec81eb1..6882b1eae5 100644
+--- a/shell/common/application_info_win.cc
++++ b/shell/common/application_info_win.cc
+@@ -71,11 +71,41 @@ bool GetAppUserModelID(ScopedHString* app_id) {
+ }
+ 
+ bool IsRunningInDesktopBridgeImpl() {
+-  UINT32 length = PACKAGE_FAMILY_NAME_MAX_LENGTH;
+-  wchar_t packageFamilyName[PACKAGE_FAMILY_NAME_MAX_LENGTH];
+-  HANDLE proc = GetCurrentProcess();
+-  LONG result = GetPackageFamilyName(proc, &length, packageFamilyName);
+-  return result == ERROR_SUCCESS;
++  if (IsWindows8OrGreater()) {
++    // GetPackageFamilyName is not available on Windows 7
++    using GetPackageFamilyNameFuncPtr = decltype(&GetPackageFamilyName);
++
++    static bool initialize_get_package_family_name = true;
++    static GetPackageFamilyNameFuncPtr get_package_family_namePtr = NULL;
++
++    if (initialize_get_package_family_name) {
++      initialize_get_package_family_name = false;
++      HMODULE kernel32_base = GetModuleHandle(L"Kernel32.dll");
++      if (!kernel32_base) {
++        NOTREACHED() << std::string(" ") << std::string(__FUNCTION__)
++                     << std::string("(): Can't open Kernel32.dll");
++        return false;
++      }
++
++      get_package_family_namePtr =
++          reinterpret_cast<GetPackageFamilyNameFuncPtr>(
++              GetProcAddress(kernel32_base, "GetPackageFamilyName"));
++
++      if (!get_package_family_namePtr) {
++        return false;
++      }
++    }
++
++    UINT32 length = PACKAGE_FAMILY_NAME_MAX_LENGTH;
++    wchar_t packageFamilyName[PACKAGE_FAMILY_NAME_MAX_LENGTH];
++    HANDLE proc = GetCurrentProcess();
++    LONG result =
++        (*get_package_family_namePtr)(proc, &length, packageFamilyName);
++
++    return result == ERROR_SUCCESS;
++  } else {
++    return false;
++  }
+ }
+ 
+ bool IsRunningInDesktopBridge() {
+diff --git a/shell/common/language_util_win.cc b/shell/common/language_util_win.cc
+index 1e5020ef61..e8e681aaaf 100644
+--- a/shell/common/language_util_win.cc
++++ b/shell/common/language_util_win.cc
+@@ -18,6 +18,12 @@ namespace electron {
+ 
+ bool GetPreferredLanguagesUsingGlobalization(
+     std::vector<std::wstring>* languages) {
++  if (base::win::GetVersion() < base::win::Version::WIN10)
++    return false;
++  if (!base::win::ResolveCoreWinRTDelayload() ||
++      !base::win::ScopedHString::ResolveCoreWinRTStringDelayload())
++    return false;
++
+   base::win::ScopedHString guid = base::win::ScopedHString::Create(
+       RuntimeClass_Windows_System_UserProfile_GlobalizationPreferences);
+   Microsoft::WRL::ComPtr<
+diff --git a/shell/common/platform_util_win.cc b/shell/common/platform_util_win.cc
+index 43684fc9e0..eb50a2cb05 100644
+--- a/shell/common/platform_util_win.cc
++++ b/shell/common/platform_util_win.cc
+@@ -375,11 +375,23 @@ bool MoveItemToTrashWithError(const base::FilePath& path,
+   // Elevation prompt enabled for UAC protected files.  This overrides the
+   // SILENT, NO_UI and NOERRORUI flags.
+ 
+-  if (FAILED(pfo->SetOperationFlags(
+-          FOF_NO_UI | FOFX_ADDUNDORECORD | FOF_NOERRORUI | FOF_SILENT |
+-          FOFX_SHOWELEVATIONPROMPT | FOFX_RECYCLEONDELETE))) {
+-    *error = "Failed to set operation flags";
+-    return false;
++  if (base::win::GetVersion() >= base::win::Version::WIN8) {
++    // Windows 8 introduces the flag RECYCLEONDELETE and deprecates the
++    // ALLOWUNDO in favor of ADDUNDORECORD.
++    if (FAILED(pfo->SetOperationFlags(
++            FOF_NO_UI | FOFX_ADDUNDORECORD | FOF_NOERRORUI | FOF_SILENT |
++            FOFX_SHOWELEVATIONPROMPT | FOFX_RECYCLEONDELETE))) {
++      *error = "Failed to set operation flags";
++      return false;
++    }
++  } else {
++    // For Windows 7 and Vista, RecycleOnDelete is the default behavior.
++    if (FAILED(pfo->SetOperationFlags(FOF_NO_UI | FOF_ALLOWUNDO |
++                                      FOF_NOERRORUI | FOF_SILENT |
++                                      FOFX_SHOWELEVATIONPROMPT))) {
++      *error = "Failed to set operation flags";
++      return false;
++    }
+   }
+ 
+   // Create an IShellItem from the supplied source path.
+diff --git a/spec/fixtures/version-bumper/fixture_support.md b/spec/fixtures/version-bumper/fixture_support.md
+new file mode 100644
+index 0000000000..0ca1e58ad4
+--- /dev/null
++++ b/spec/fixtures/version-bumper/fixture_support.md
+@@ -0,0 +1,122 @@
++# Electron Support
++
++## Finding Support
++
++If you have a security concern,
++please see the [security document](https://github.com/electron/electron/tree/master/SECURITY.md).
++
++If you're looking for programming help,
++for answers to questions,
++or to join in discussion with other developers who use Electron,
++you can interact with the community in these locations:
++
++* [`Electron's Discord`](https://discord.com/invite/electron) has channels for:
++  * Getting help
++  * Ecosystem apps like [Electron Forge](https://github.com/electron-userland/electron-forge) and [Electron Fiddle](https://github.com/electron/fiddle)
++  * Sharing ideas with other Electron app developers
++  * And more!
++* [`electron`](https://discuss.atom.io/c/electron) category on the Atom forums
++* `#atom-shell` channel on Freenode
++* `#electron` channel on [Atom's Slack](https://discuss.atom.io/t/join-us-on-slack/16638?source_topic_id=25406)
++* [`electron-ru`](https://telegram.me/electron_ru) *(Russian)*
++* [`electron-br`](https://electron-br.slack.com) *(Brazilian Portuguese)*
++* [`electron-kr`](https://electron-kr.github.io/electron-kr) *(Korean)*
++* [`electron-jp`](https://electron-jp.slack.com) *(Japanese)*
++* [`electron-tr`](https://electron-tr.herokuapp.com) *(Turkish)*
++* [`electron-id`](https://electron-id.slack.com) *(Indonesia)*
++* [`electron-pl`](https://electronpl.github.io) *(Poland)*
++
++If you'd like to contribute to Electron,
++see the [contributing document](https://github.com/electron/electron/blob/master/CONTRIBUTING.md).
++
++If you've found a bug in a [supported version](#supported-versions) of Electron,
++please report it with the [issue tracker](../development/issues.md).
++
++[awesome-electron](https://github.com/sindresorhus/awesome-electron)
++is a community-maintained list of useful example apps,
++tools and resources.
++
++## Supported Versions
++
++The latest three *stable* major versions are supported by the Electron team.
++For example, if the latest release is 6.1.x, then the 5.0.x as well
++as the 4.2.x series are supported.  We only support the latest minor release
++for each stable release series.  This means that in the case of a security fix
++6.1.x will receive the fix, but we will not release a new version of 6.0.x.
++
++The latest stable release unilaterally receives all fixes from `master`,
++and the version prior to that receives the vast majority of those fixes
++as time and bandwidth warrants. The oldest supported release line will receive
++only security fixes directly.
++
++All supported release lines will accept external pull requests to backport
++fixes previously merged to `master`, though this may be on a case-by-case
++basis for some older supported lines. All contested decisions around release
++line backports will be resolved by the [Releases Working Group](https://github.com/electron/governance/tree/master/wg-releases) as an agenda item at their weekly meeting the week the backport PR is raised.
++
++When an API is changed or removed in a way that breaks existing functionality, the
++previous functionality will be supported for a minimum of two major versions when
++possible before being removed. For example, if a function takes three arguments,
++and that number is reduced to two in major version 10, the three-argument version would
++continue to work until, at minimum, major version 12. Past the minimum two-version
++threshold, we will attempt to support backwards compatibility beyond two versions
++until the maintainers feel the maintenance burden is too high to continue doing so.
++
++### Currently supported versions
++
++* 4.x.y
++* 3.x.y
++* 2.x.y
++* 1.x.y
++
++### End-of-life
++
++When a release branch reaches the end of its support cycle, the series
++will be deprecated in NPM and a final end-of-support release will be
++made. This release will add a warning to inform that an unsupported
++version of Electron is in use.
++
++These steps are to help app developers learn when a branch they're
++using becomes unsupported, but without being excessively intrusive
++to end users.
++
++If an application has exceptional circumstances and needs to stay
++on an unsupported series of Electron, developers can silence the
++end-of-support warning by omitting the final release from the app's
++`package.json` `devDependencies`. For example, since the 1-6-x series
++ended with an end-of-support 1.6.18 release, developers could choose
++to stay in the 1-6-x series without warnings with `devDependency` of
++`"electron": 1.6.0 - 1.6.17`.
++
++## Supported Platforms
++
++Following platforms are supported by Electron:
++
++### macOS
++
++Only 64bit binaries are provided for macOS, and the minimum macOS version
++supported is macOS 10.11 (El Capitan).
++
++Native support for Apple Silicon (`arm64`) devices was added in Electron 11.0.0.
++
++### Windows
++
++Windows 7 and later are supported, older operating systems are not supported
++(and do not work).
++
++Both `ia32` (`x86`) and `x64` (`amd64`) binaries are provided for Windows.
++[Native support for Windows on Arm (`arm64`) devices was added in Electron 6.0.8.](windows-arm.md).
++Running apps packaged with previous versions is possible using the ia32 binary.
++
++### Linux
++
++The prebuilt binaries of Electron are built on Ubuntu 18.04.
++
++Whether the prebuilt binary can run on a distribution depends on whether the
++distribution includes the libraries that Electron is linked to on the building
++platform, so only Ubuntu 18.04 is guaranteed to work, but following platforms
++are also verified to be able to run the prebuilt binaries of Electron:
++
++* Ubuntu 14.04 and newer
++* Fedora 24 and newer
++* Debian 8 and newer
