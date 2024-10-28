@@ -1,0 +1,111 @@
+is_electron_build = true
+root_extra_deps = [ "//electron" ]
+
+# Registry of NMVs --> https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
+node_module_version = 119
+
+v8_promise_internal_field_count = 1
+v8_embedder_string = "-electron.0"
+
+# TODO: this breaks mksnapshot
+v8_enable_snapshot_native_code_counters = false
+
+# we use this api
+v8_enable_javascript_promise_hooks = true
+
+enable_cdm_host_verification = false
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"
+
+enable_printing = true
+
+# Removes DLLs from the build, which are only meant to be used for Chromium development.
+# See https://github.com/electron/electron/pull/17985
+angle_enable_vulkan_validation_layers = false
+dawn_enable_vulkan_validation_layers = false
+
+# Removes dxc dll's that are only used experimentally.
+# See https://bugs.chromium.org/p/chromium/issues/detail?id=1474897
+dawn_use_built_dxc = false
+
+# These are disabled because they cause the zip manifest to differ between
+# testing and release builds.
+# See https://chromium-review.googlesource.com/c/chromium/src/+/2774898.
+enable_pseudolocales = false
+
+# Make application name configurable at runtime for cookie crypto
+allow_runtime_configurable_key_storage = true
+
+# CET shadow stack is incompatible with v8, until v8 is CET compliant
+# enabling this flag causes main process crashes where CET is enabled
+# Ref: https://source.chromium.org/chromium/chromium/src/+/45fba672185aae233e75d6ddc81ea1e0b30db050:v8/BUILD.gn;l=357
+enable_cet_shadow_stack = false
+
+# For similar reasons, disable CFI, which is not well supported in V8.
+# Chromium doesn't have any problems with this because they do not run
+# V8 in the browser process.
+# Ref: https://source.chromium.org/chromium/chromium/src/+/45fba672185aae233e75d6ddc81ea1e0b30db050:v8/BUILD.gn;l=281
+is_cfi = false
+
+# TODO: fix this once sysroots have been updated.
+use_qt = false
+
+# https://chromium-review.googlesource.com/c/chromium/src/+/4365718
+# TODO(codebytere): fix perfetto incompatibility with Node.js.
+use_perfetto_client_library = false
+
+# Disables the builtins PGO for V8
+v8_builtins_profiling_log_file = ""
+
+# https://chromium.googlesource.com/chromium/src/+/main/docs/dangling_ptr.md
+# TODO(vertedinde): hunt down dangling pointers on Linux
+enable_dangling_raw_ptr_checks = false
+
+# This flag speeds up the performance of fork/execve on linux systems.
+# Ref: https://chromium-review.googlesource.com/c/v8/v8/+/4602858
+v8_enable_private_mapping_fork_optimization = true
+
+is_component_build = false
+is_official_build = true
+
+# This may be guarded behind is_chrome_branded alongside
+# proprietary_codecs https://webrtc-review.googlesource.com/c/src/+/36321,
+# explicitly override here to build OpenH264 encoder/FFmpeg decoder.
+# The initialization of the decoder depends on whether ffmpeg has
+# been built with H.264 support.
+rtc_use_h264 = proprietary_codecs
+
+# By default, Electron builds ffmpeg with proprietary codecs enabled. In order
+# to facilitate users who don't want to ship proprietary codecs in ffmpeg, or
+# who have an LGPL requirement to ship ffmpeg as a dynamically linked library,
+# we build ffmpeg as a shared library.
+is_component_ffmpeg = true
+
+# Added by Alex313031
+visual_studio_version = "2022"
+target_os = "win"
+target_cpu = "x64"
+enable_stripping = true
+dcheck_always_on = false
+exclude_unwind_tables = true
+enable_iterator_debugging = false
+disable_fieldtrial_testing_config = true
+treat_warnings_as_errors = false
+symbol_level = 0
+rtc_include_ilbc = proprietary_codecs
+enable_reporting = false
+enable_resource_allowlist_generation = false
+enable_profiling = false
+enable_platform_hevc = proprietary_codecs
+enable_hevc_parser_and_hw_decoder = proprietary_codecs
+platform_has_optional_hevc_support = proprietary_codecs
+enable_platform_ac3_eac3_audio = proprietary_codecs
+enable_platform_dolby_vision = proprietary_codecs
+enable_platform_encrypted_dolby_vision = proprietary_codecs
+enable_platform_mpeg_h_audio = proprietary_codecs
+enable_platform_dts_audio = proprietary_codecs
+enable_mse_mpeg2ts_stream_parser = proprietary_codecs
+use_text_section_splitting = true
+use_thin_lto = true
+thin_lto_enable_optimizations = true
+enable_rust = true
