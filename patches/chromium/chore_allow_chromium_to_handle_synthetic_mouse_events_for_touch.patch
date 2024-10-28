@@ -63,9 +63,9 @@ diff --git a/ui/views/win/hwnd_message_handler_delegate.h b/ui/views/win/hwnd_me
 index 233dd12f86c20a7f5169caab998993f614e8bc7e..3bf6fc95a653f1783510378ffeef5b18da42e559 100644
 --- a/ui/views/win/hwnd_message_handler_delegate.h
 +++ b/ui/views/win/hwnd_message_handler_delegate.h
-@@ -258,6 +258,10 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
-   // Called when the window scale factor has changed.
-   virtual void HandleWindowScaleFactorChanged(float window_scale_factor) = 0;
+@@ -255,6 +255,10 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
+   // Called when the headless window bounds has changed.
+   virtual void HandleHeadlessWindowBoundsChanged(const gfx::Rect& bounds) = 0;
  
 +  // Called when synthetic mouse event is generated for touch event on
 +  // caption buttons.
